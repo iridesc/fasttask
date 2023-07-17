@@ -1,2 +1,5 @@
 fastapi
 uvicorn[standard]
+celery
+redis
+gevent
