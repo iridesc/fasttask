@@ -3,8 +3,8 @@ from celery import Celery
 
 app = Celery(
     'celery_task',
-    broker='redis://localhost:6379/1',
-    backend='redis://localhost:6379/2',
+    broker='redis://redis:6379/1',
+    backend='redis://redis:6379/2',
     include=[
         'celery_task.add',
     ],

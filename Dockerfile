@@ -1,10 +1,7 @@
 FROM irid/py3
 
-RUN apt update
-RUN apt install redis-server
-RUN pip install -r req.txt
-
 COPY fasttask /fasttask
 WORKDIR /fasttask
+RUN pip install -r req.txt
 
-CMD celery -A celery_tasks worker -l info
+CMD celery multi start w1 -A celery_task -l info && uvicorn api:app --host 0.0.0.0 --port 80 --reload
