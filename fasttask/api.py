@@ -1,9 +1,8 @@
-from typing import Dict
+from typing import Dict, Any, List
 from enum import Enum
 from fastapi import FastAPI
 from pydantic import BaseModel
 from importlib import import_module, reload
-from celery.result import AsyncResult
 from celery_task.celery import app as celery_app
 
 
@@ -11,9 +10,9 @@ app = FastAPI()
 
 
 class CreateTaskInfo(BaseModel):
-    name: str
-    args: list
-    kwargs: dict
+    name: str="add"
+    args: List[Any]=[1,1] 
+    kwargs: dict=dict()
 
 
 class TaskState(Enum):
@@ -30,12 +29,12 @@ class ResultInfo(BaseModel):
     # task_name: str
     state: TaskState
     message: str = ""
-    result: dict = dict()
+    result: Any = None
 
 
 @app.post("/create/", response_model=ResultInfo)
 def create(crate_task_info: CreateTaskInfo, ):
-    module = import_module(package="celery_task", name=f".{crate_task_info.name}")
+    module = import_module(package="celery_task.tasks", name=f".{crate_task_info.name}")
     task = getattr(module, crate_task_info.name)
     result = task.delay(*crate_task_info.args, **crate_task_info.kwargs)
 
@@ -55,25 +54,23 @@ def create(crate_task_info: CreateTaskInfo, ):
 
 @app.get("/check/", response_model=ResultInfo)
 def check(result_id: str):
-
+    # print("init result")
     result = celery_app.AsyncResult(result_id)
-    print(result.id)
-    print(type(result.id))
-    print(result.get())
-
+    # print("init result info")
     result_info = ResultInfo(
         id=result.id,
         # task_name=result.task_name,
         state=result.state
     )
-    print("checked")
+    # print("set result")
 
-    if result.successful():
-        print("SUC")
+    if result.state == TaskState.success.value:
+        # print("success")
         result_info.result = result.get()
-    elif result.state == "FAILURE":
-        print("F")
-
+    elif result.state == TaskState.failure.value:
+        # print("failure")
         result_info.message = result.get()
-        print(result_info.message)
+        
+    # print("return")
+
     return result_info

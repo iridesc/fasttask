@@ -1,17 +1,17 @@
-python:
-  image: fasttask:latest
-  restart: always
-  expose:
-    - "8000"
-    - "80"
-  # volumes:
-  #   - ~/django/902Scratch/API:/home/django/API 
-  command: bash -c "celery multi start w1 -A celery_task -l info && uvicorn api:app --host 0.0.0.0 --port 80 --reload"
-  ports:
-        - "0.0.0.0:8000:8000"
+version: "3.9"
 
-redis:
-  image: redis:alpine
-  restart: always
-  expose:
-    - '6379'
+services:
+  fasttask:
+    image: irid/fasttask:latest
+    restart: always
+    volumes:
+      - ./fasttask:/fasttask
+    command: bash -c "celery multi start w1 -A celery_task -l info && uvicorn api:app --host 0.0.0.0 --port 80 --reload"
+    ports:
+          - "80:80"
+
+  redis:
+    image: redis:alpine
+    restart: always
+    expose:
+      - '6379'

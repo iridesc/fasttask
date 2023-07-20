@@ -1,12 +1,12 @@
-from __future__ import absolute_import, unicode_literals
 from celery import Celery
+import os
 
 app = Celery(
     'celery_task',
     broker='redis://redis:6379/1',
     backend='redis://redis:6379/2',
     include=[
-        'celery_task.add',
+        f'celery_task.tasks.{py_file.strip(".py")}' for py_file in os.listdir("celery_task/tasks") if py_file.endswith(".py")
     ],
     result_extended=True,
 )
