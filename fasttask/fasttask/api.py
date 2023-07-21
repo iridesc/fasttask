@@ -69,7 +69,7 @@ def check(result_id: str):
         result_info.result = result.get()
     elif result.state == TaskState.failure.value:
         # print("failure")
-        result_info.message = result.get()
+        result_info.message = result.get(propagate=False)
         
     # print("return")
 

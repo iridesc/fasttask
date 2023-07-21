@@ -1,0 +1,19 @@
+version: "3.9"
+
+services:  
+  redis:
+    image: redis:alpine
+    restart: always
+    expose:
+      - '6379'
+
+  fasttask_demo:
+    restart: always
+    volumes:
+      - ./tasks:/fasttask/celery_task/tasks
+    command: bash -c "celery multi start w1 -A celery_task -l info && uvicorn api:app --host 0.0.0.0 --port 80 --reload"
+    ports:
+          - "8000:80"
+
+    # your fasttask image name
+    image: fasttask_demo
