@@ -2,7 +2,7 @@ version: "3.9"
 
 services:
   fasttask:
-    image: irid/fasttask:latest
+    image: fasttask
     restart: always
     volumes:
       - ./fasttask:/fasttask
