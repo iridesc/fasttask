@@ -1,0 +1,8 @@
+FROM irid/fasttask
+RUN rm -rf tasks
+COPY tasks tasks
+COPY req.txt req.txt
+RUN pip install -r req.txt
+
+# set up your docker env here if necessary
+# ---
