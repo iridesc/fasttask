@@ -1,10 +1,20 @@
 import os
+worker_amount = 16
+port = 80
 
 project_name = input("project name:")
 task_name = input("task_name:")
 
-docker_file_content = '''FROM irid/fasttask
+def get_int_input_or_default(name, default):
+    input_str = input(f"{name} (default:{default}):")
+    return int(input_str) if input_str else default
 
+port = get_int_input_or_default("port", port)
+worker_amount = get_int_input_or_default("worker_amount", 16)
+
+docker_file_content = '''FROM irid/fasttask
+run rm celery_task/tasks
+COPY tasks celery_task/tasks
 COPY req.txt req.txt
 RUN pip install -r req.txt
 
@@ -24,9 +34,9 @@ services:
     restart: always
     volumes:
       - ./tasks:/fasttask/celery_task/tasks
-    command: bash -c "celery multi start w1 -A celery_task -l info && uvicorn api:app --host 0.0.0.0 --port 80 --reload"
+    command: bash -c "celery multi start w1 -A celery_task -l info -c {worker_amount} && uvicorn api:app --host 0.0.0.0 --port 80 --reload"
     ports:
-          - "8000:80"
+          - "{port}:80"
 
     image: {project_name}
 '''
