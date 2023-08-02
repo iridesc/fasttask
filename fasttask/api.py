@@ -3,7 +3,7 @@ from enum import Enum
 from fastapi import FastAPI
 from pydantic import BaseModel
 from importlib import import_module
-from celery_task.celery import app as celery_app
+from celery_app import app as celery_app
 import traceback
 
 app = FastAPI()
@@ -43,12 +43,19 @@ def makeup_result_info(result: celery_app.AsyncResult, result_info: ResultInfo =
     return result_info
 
 
+@app.post("/run/")
+def run(crate_task_info: CreateTaskInfo):
+    module = import_module(package="tasks", name=f".{crate_task_info.name}")
+    task = getattr(module, crate_task_info.name)
+    return task(*crate_task_info.args, **crate_task_info.kwargs)
+
+
 @app.post("/create/", response_model=ResultInfo)
 def create(crate_task_info: CreateTaskInfo, ):
 
     result_info = ResultInfo()
     try:
-        module = import_module(package="celery_task.tasks", name=f".{crate_task_info.name}")
+        module = import_module(package="tasks", name=f".{crate_task_info.name}")
         task = getattr(module, crate_task_info.name)
         result = task.delay(*crate_task_info.args, **crate_task_info.kwargs)
     except Exception:
