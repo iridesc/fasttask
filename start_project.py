@@ -13,7 +13,7 @@ port = get_int_input_or_default("port", port)
 worker_amount = get_int_input_or_default("worker_amount", 16)
 
 docker_file_content = '''FROM irid/fasttask
-run rm celery_task/tasks
+RUN rm -rf celery_task/tasks
 COPY tasks celery_task/tasks
 COPY req.txt req.txt
 RUN pip install -r req.txt
