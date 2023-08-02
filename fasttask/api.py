@@ -31,6 +31,10 @@ class ResultInfo(BaseModel):
     result: Any = None
 
 
+class RunResultInfo(BaseModel):
+    result: Any = None
+
+
 def makeup_result_info(result: celery_app.AsyncResult, result_info: ResultInfo = None):
     result_info = result_info if result_info else ResultInfo()
     result_info.id = result.id
@@ -43,11 +47,11 @@ def makeup_result_info(result: celery_app.AsyncResult, result_info: ResultInfo =
     return result_info
 
 
-@app.post("/run/")
+@app.post("/run/", response_model=RunResultInfo)
 def run(crate_task_info: CreateTaskInfo):
     module = import_module(package="tasks", name=f".{crate_task_info.name}")
     task = getattr(module, crate_task_info.name)
-    return task(*crate_task_info.args, **crate_task_info.kwargs)
+    return RunResultInfo(result=task(*crate_task_info.args, **crate_task_info.kwargs))
 
 
 @app.post("/create/", response_model=ResultInfo)
