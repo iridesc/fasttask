@@ -1,18 +1,14 @@
-from typing import Any, List
+from typing import Any
 from enum import Enum
 from fastapi import FastAPI
 from pydantic import BaseModel
 from importlib import import_module
 from celery_app import app as celery_app
+from tools import load_task_names
 import traceback
 
+
 app = FastAPI()
-
-
-class CreateTaskInfo(BaseModel):
-    name: str = "add"
-    args: List[Any] = [1, 1]
-    kwargs: dict = dict()
 
 
 class TaskState(Enum):
@@ -24,51 +20,71 @@ class TaskState(Enum):
     retry = "RETRY"
 
 
-class ResultInfo(BaseModel):
-    id: str = ""
-    # task_name: str
-    state: TaskState = TaskState.failure.value
-    result: Any = None
-
-
-class RunResultInfo(BaseModel):
-    result: Any = None
-
-
-def makeup_result_info(result: celery_app.AsyncResult, result_info: ResultInfo = None):
-    result_info = result_info if result_info else ResultInfo()
-    result_info.id = result.id
+def makeup_result_info(async_result: celery_app.AsyncResult, result_info):
+    result_info.id = async_result.id
     # task_name=crate_task_info.name
-    result_info.state = result.state
-    if result.state == TaskState.success.value:
-        result_info.result = result.result
-    elif result.state == TaskState.failure.value:
-        result_info.result = str(result.result)
+    result_info.state = async_result.state
+    if async_result.state == TaskState.success.value:
+        result_info.result = async_result.result
+    elif async_result.state == TaskState.failure.value:
+        result_info.result = str(async_result.result)
     return result_info
 
 
-@app.post("/run/", response_model=RunResultInfo)
-def run(crate_task_info: CreateTaskInfo):
-    module = import_module(package="tasks", name=f".{crate_task_info.name}")
-    task = getattr(module, crate_task_info.name)
-    return RunResultInfo(result=task(*crate_task_info.args, **crate_task_info.kwargs))
+class EmptyInfo(BaseModel):
+    ...
 
 
-@app.post("/create/", response_model=ResultInfo)
-def create(crate_task_info: CreateTaskInfo, ):
-
-    result_info = ResultInfo()
+def try_import_Data(task_model, DataName):
     try:
-        module = import_module(package="tasks", name=f".{crate_task_info.name}")
-        task = getattr(module, crate_task_info.name)
-        result = task.delay(*crate_task_info.args, **crate_task_info.kwargs)
-    except Exception:
-        result_info.result = traceback.format_exc()
-    else:
-        makeup_result_info(result, result_info)
-    return result_info
+        return getattr(task_model, DataName)
+    except Exception as e:
+        print(e)
+        print(f"{task_model} {DataName} not found!")
+        return Any
 
 
-@app.get("/check/", response_model=ResultInfo)
-def check(result_id: str):
-    return makeup_result_info(celery_app.AsyncResult(result_id))
+task_names = load_task_names()
+for task_name in task_names:
+    print("importing ", task_name)
+    task_model = import_module(package="tasks", name=f".{task_name}")
+
+    task = getattr(task_model, task_name)
+
+    Result = try_import_Data(task_model, "Result")
+    Params = try_import_Data(task_model, "Params")
+
+    class ResultInfo(BaseModel):
+        id: str = ""
+        # task_name: str
+        state: TaskState = TaskState.failure.value
+        result: Result
+
+    @app.post(f"/run/{task_name}/", response_model=Result)
+    def run(params: Params):
+        return task(**(params.model_dump() if isinstance(params, BaseModel) else params))
+
+    @app.post(f"/create/{task_name}/", response_model=ResultInfo)
+    def create(params: Params):
+        result_info = ResultInfo()
+        try:
+            async_result = task.delay(**(params.model_dump() if isinstance(params, BaseModel) else params))
+        except Exception:
+            result_info.result = traceback.format_exc()
+        else:
+            makeup_result_info(async_result, result_info)
+        return result_info
+
+    @app.get(f"/check/{task_name}", response_model=ResultInfo)
+    def check(result_id: str):
+        return makeup_result_info(celery_app.AsyncResult(result_id), ResultInfo())
+
+    globals_dict = globals()
+    globals_dict[f"run_{task_name}"] = run
+    globals_dict[f"create_{task_name}"] = create
+    globals_dict[f"check_{task_name}"] = check
+
+
+@app.get("/")
+def home():
+    return task_names

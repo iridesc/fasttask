@@ -28,7 +28,6 @@ port = get_int_input_or_default("port", 80)
 worker_amount = get_int_input_or_default("worker_amount", 16)
 
 fasttask_path = os.path.abspath(os.path.dirname(__file__))
-print(fasttask_path) 
 
 shutil.copytree(os.path.join(fasttask_path, "fasttask/tasks"), f"{project_name}/tasks")
 shutil.copyfile(os.path.join(fasttask_path, "Dockerfile_project"), f"{project_name}/Dockerfile")

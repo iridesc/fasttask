@@ -1,12 +1,11 @@
 from celery import Celery
-import os
-
+from tools import load_task_names
 app = Celery(
     'celery_task',
     broker='redis://redis:6379/1',
     backend='redis://redis:6379/2',
     include=[
-        f'tasks.{py_file[:-3]}' for py_file in os.listdir("tasks") if py_file.endswith(".py")
+        f'tasks.{task_name}' for task_name in load_task_names()
     ],
     result_extended=True,
 )
