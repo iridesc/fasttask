@@ -1,2 +1,2 @@
-def xx(a, b):
-    return a**b
+def xx(x):
+    return x**2

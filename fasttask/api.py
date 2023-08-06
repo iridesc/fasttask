@@ -1,4 +1,4 @@
-from typing import Any
+from typing import Any, Union
 from enum import Enum
 from fastapi import FastAPI
 from pydantic import BaseModel
@@ -18,21 +18,6 @@ class TaskState(Enum):
     success = "SUCCESS"
     revoked = "REVOKED"
     retry = "RETRY"
-
-
-def makeup_result_info(async_result: celery_app.AsyncResult, result_info):
-    result_info.id = async_result.id
-    # task_name=crate_task_info.name
-    result_info.state = async_result.state
-    if async_result.state == TaskState.success.value:
-        result_info.result = async_result.result
-    elif async_result.state == TaskState.failure.value:
-        result_info.result = str(async_result.result)
-    return result_info
-
-
-class EmptyInfo(BaseModel):
-    ...
 
 
 def try_import_Data(task_model, DataName):
@@ -56,35 +41,53 @@ for task_name in task_names:
 
     class ResultInfo(BaseModel):
         id: str = ""
-        # task_name: str
         state: TaskState = TaskState.failure.value
-        result: Result
+        result: Union[Result, str]
 
-    @app.post(f"/run/{task_name}/", response_model=Result)
+    def makeup_result_info(async_result: celery_app.AsyncResult, result_info):
+        print("async_result", async_result)
+        print("async_result.state", async_result.state)
+
+        print(result_info)
+
+        return result_info
+
+    @app.post(f"/run/{task_name}/", response_model=ResultInfo)
     def run(params: Params):
-        return task(**(params.model_dump() if isinstance(params, BaseModel) else params))
+        try:
+            result = Result(**task(**params.model_dump()))
+            state = TaskState.success.value
+        except Exception:
+            result = traceback.format_exc()
+            state = TaskState.failure.value
+
+        return ResultInfo(result=result, state=state)
 
     @app.post(f"/create/{task_name}/", response_model=ResultInfo)
     def create(params: Params):
-        result_info = ResultInfo()
+
         try:
-            async_result = task.delay(**(params.model_dump() if isinstance(params, BaseModel) else params))
+            async_result = task.delay(**params.model_dump())
+
         except Exception:
-            result_info.result = traceback.format_exc()
+
+            result_info = ResultInfo(result=traceback.format_exc())
         else:
-            makeup_result_info(async_result, result_info)
+            result_info = ResultInfo(id=async_result.id, state=async_result.state, result="")
+
         return result_info
 
     @app.get(f"/check/{task_name}", response_model=ResultInfo)
     def check(result_id: str):
-        return makeup_result_info(celery_app.AsyncResult(result_id), ResultInfo())
+        async_result = celery_app.AsyncResult(result_id)
+        return ResultInfo(
+            id=result_id,
+            state=async_result.state,
+            result=Result(**async_result.result) if async_result.state == TaskState.success.value else str(
+                async_result.result)
+        )
 
     globals_dict = globals()
     globals_dict[f"run_{task_name}"] = run
     globals_dict[f"create_{task_name}"] = create
     globals_dict[f"check_{task_name}"] = check
-
-
-@app.get("/")
-def home():
-    return task_names

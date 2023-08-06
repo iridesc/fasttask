@@ -23,14 +23,19 @@ def replace_file_content(file, replace_dict):
     write_file(content, file)
 
 
-project_name = input("project name:")
-port = get_int_input_or_default("port", 80)
-worker_amount = get_int_input_or_default("worker_amount", 16)
+def start_project():
+    project_name = input("project name:")
+    port = get_int_input_or_default("port", 80)
+    # worker_amount = get_int_input_or_default("worker_amount", 16)
 
-fasttask_path = os.path.abspath(os.path.dirname(__file__))
+    fasttask_path = os.path.abspath(os.path.dirname(__file__))
 
-shutil.copytree(os.path.join(fasttask_path, "fasttask/tasks"), f"{project_name}/tasks")
-shutil.copyfile(os.path.join(fasttask_path, "Dockerfile_project"), f"{project_name}/Dockerfile")
-shutil.copyfile(os.path.join(fasttask_path, "docker-compose_project.yml"), f"{project_name}/docker-compose.yml")
-write_file("\n", f"{project_name}/req.txt")
-replace_file_content(f"{project_name}/docker-compose.yml", {"project_name": project_name, "port": port})
+    shutil.copytree(os.path.join(fasttask_path, "fasttask/tasks"), f"{project_name}/tasks")
+    shutil.copyfile(os.path.join(fasttask_path, "Dockerfile_project"), f"{project_name}/Dockerfile")
+    shutil.copyfile(os.path.join(fasttask_path, "docker-compose_project.yml"), f"{project_name}/docker-compose.yml")
+    write_file("\n", f"{project_name}/req.txt")
+    replace_file_content(f"{project_name}/docker-compose.yml", {"project_name": project_name, "port": port})
+
+
+if __name__ == "__main__":
+    start_project()

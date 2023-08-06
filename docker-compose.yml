@@ -1,15 +1,16 @@
 version: "3.9"
 
 services:
-  fasttask:
-    image: fasttask
-    restart: always
-    command: sh run.sh
-    ports:
-          - "8080:80"
+
   redis:
     image: redis:alpine
     restart: always
     expose:
       - '6379'
 
+  fasttask:
+    image: fasttask
+    restart: always
+    command: sh run.sh
+    ports:
+      - "8080:80"
