@@ -29,8 +29,7 @@ def try_import_Data(task_model, DataName):
         return Any
 
 
-task_names = load_task_names()
-for task_name in task_names:
+def makeup_api(task_name):
     print("importing ", task_name)
     task_model = import_module(package="tasks", name=f".{task_name}")
 
@@ -87,7 +86,10 @@ for task_name in task_names:
                 async_result.result)
         )
 
-    globals_dict = globals()
-    globals_dict[f"run_{task_name}"] = run
-    globals_dict[f"create_{task_name}"] = create
-    globals_dict[f"check_{task_name}"] = check
+    return run, create, check
+
+
+globals_dict = globals()
+for task_name in load_task_names():
+    globals_dict[f"run_{task_name}"], globals_dict[f"create_{task_name}"], globals_dict[f"check_{task_name}"] = makeup_api(
+        task_name)
