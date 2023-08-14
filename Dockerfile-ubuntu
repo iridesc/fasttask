@@ -3,6 +3,7 @@ FROM ubuntu:latest
 ENV PYTHONDONTWRITEBYTECODE=1
 
 RUN apt update
+RUN apt install python3-pip
 
 COPY req.txt req.txt
 RUN pip install -r req.txt
