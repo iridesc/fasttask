@@ -1,3 +1,5 @@
+import os
+import traceback
 from typing import Any, Union
 from enum import Enum
 from fastapi import FastAPI
@@ -5,7 +7,7 @@ from pydantic import BaseModel
 from importlib import import_module
 from celery_app import app as celery_app
 from tools import load_task_names
-import traceback
+from starlette.responses import FileResponse
 
 
 app = FastAPI()
@@ -19,6 +21,8 @@ class TaskState(Enum):
     revoked = "REVOKED"
     retry = "RETRY"
 
+class DownloadFileInfo(BaseModel):
+    file_path:str
 
 def try_import_Data(task_model, DataName):
     try:
@@ -87,6 +91,16 @@ def makeup_api(task_name):
         )
 
     return run, create, check
+
+
+@app.get("/download")
+def download_file(file_path):
+    file_path = os.path.abspath(file_path)
+
+    if ".." in file_path.split("/"):
+        raise Exception(".. is not allowed in path")
+    
+    return FileResponse("file_path", filename="user.xlsx")
 
 
 globals_dict = globals()
