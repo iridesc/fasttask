@@ -1,16 +1,25 @@
 import os
+import secrets
 import traceback
-from typing import Any, Union
 from enum import Enum
-from fastapi import FastAPI
-from pydantic import BaseModel
+from typing import Any, Union, Annotated
 from importlib import import_module
+from pydantic import BaseModel
+from starlette.responses import FileResponse
+from fastapi import Depends, FastAPI, HTTPException, status
+from fastapi.security import HTTPBasic, HTTPBasicCredentials
+
 from celery_app import app as celery_app
 from tools import load_task_names
-from starlette.responses import FileResponse
 
+import setting
 
 app = FastAPI()
+security = HTTPBasic()
+
+
+if not setting.user_to_passwd:
+    print("setting.user_to_passwd not set! anyone can access this service!")
 
 
 class TaskState(Enum):
@@ -21,15 +30,33 @@ class TaskState(Enum):
     revoked = "REVOKED"
     retry = "RETRY"
 
+
 class DownloadFileInfo(BaseModel):
-    file_path:str
+    file_path: str = "lp.jpg"
+
+
+def get_current_username(credentials: Annotated[HTTPBasicCredentials, Depends(security)]):
+    if not setting.user_to_passwd:
+        return "Anyone"
+
+    if not (credentials.username in setting.user_to_passwd and secrets.compare_digest(
+        credentials.password.encode("utf8"), setting.user_to_passwd[credentials.username].encode("utf8")
+    )):
+
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="UNAUTHORIZED",
+            headers={"WWW-Authenticate": "Basic"},
+        )
+
+    return credentials.username
+
 
 def try_import_Data(task_model, DataName):
     try:
         return getattr(task_model, DataName)
-    except Exception as e:
-        print(e)
-        print(f"{task_model} {DataName} not found!")
+    except Exception as error:
+        print(f"{task_model:} {DataName:} not found! {error:}")
         return Any
 
 
@@ -46,14 +73,6 @@ def makeup_api(task_name):
         id: str = ""
         state: TaskState = TaskState.failure.value
         result: Union[Result, str]
-
-    def makeup_result_info(async_result: celery_app.AsyncResult, result_info):
-        print("async_result", async_result)
-        print("async_result.state", async_result.state)
-
-        print(result_info)
-
-        return result_info
 
     @app.post(f"/run/{task_name}/", response_model=ResultInfo)
     def run(params: Params):
@@ -93,17 +112,23 @@ def makeup_api(task_name):
     return run, create, check
 
 
-@app.get("/download")
-def download_file(file_path):
-    file_path = os.path.abspath(file_path)
-
-    if ".." in file_path.split("/"):
-        raise Exception(".. is not allowed in path")
-    
-    return FileResponse("file_path", filename="user.xlsx")
+def get_download_api():
+    @app.get("/download")
+    def download(file_path, username: Annotated[str, Depends(get_current_username)]):
+        if ".." in file_path:
+            raise Exception(f"{username:}: .. is not allowed in path")
+        file_path = os.path.join("./files/", file_path)
+        file_path = os.path.abspath(file_path)
+        filename = os.path.basename(file_path)
+        print(f"{username:}: download: {filename:} {file_path:}:")
+        return FileResponse(file_path, filename=filename)
+    return download
 
 
 globals_dict = globals()
 for task_name in load_task_names():
     globals_dict[f"run_{task_name}"], globals_dict[f"create_{task_name}"], globals_dict[f"check_{task_name}"] = makeup_api(
         task_name)
+
+if setting.file_download:
+    globals_dict["download"] = get_download_api()

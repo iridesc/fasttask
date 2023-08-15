@@ -7,13 +7,11 @@ app = Celery(
     include=[
         f'tasks.{task_name}' for task_name in load_task_names()
     ],
-    result_extended=True,
+    result_extended=True
 )
 
-# Optional configuration, see the application user guide.
-app.conf.update(
-    result_expires=3600,
-)
+app.config_from_object("setting")
+
 
 if __name__ == '__main__':
     app.start()

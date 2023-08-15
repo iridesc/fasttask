@@ -1,7 +1,6 @@
 version: "3.9"
 
 services:
-
   redis:
     image: redis:alpine
     restart: always
@@ -12,5 +11,7 @@ services:
     image: fasttask
     restart: always
     command: sh run.sh
+    depends_on:
+      - redis
     ports:
-      - "9000:80"
+      - "9001:80"
