@@ -1,5 +1,6 @@
 from celery import Celery
 from tools import load_task_names
+
 app = Celery(
     'celery_task',
     broker='redis://redis:6379/1',
@@ -10,7 +11,7 @@ app = Celery(
     result_extended=True
 )
 
-app.config_from_object("setting")
+app.config_from_object("setting", namespace="celery")
 
 
 if __name__ == '__main__':

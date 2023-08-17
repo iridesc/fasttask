@@ -1,7 +1,11 @@
-result_expires = 3600
+# celery setting use namespeace "celery"
+# ref: https://docs.celeryq.dev/en/stable/userguide/configuration.html
+# celery_result_expires = 3600
+# celery_worker_pool = "prefork"
+# celery_worker_concurrency = 4
 
-file_download = True
+# fasttask setting
+file_download = False
 user_to_passwd = {
-    # add user like
-    # "join": "joinspasswd"
+    # "john wick": "john_passwd"
 }
