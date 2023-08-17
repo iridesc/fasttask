@@ -1,9 +1,13 @@
-from celery_app import app
-from pydantic import BaseModel
-
-from tasks.packages.tools import sleep_random
-from typing import Union
 from math import pi
+from typing import Union
+from pydantic import BaseModel
+from celery.utils.log import get_task_logger
+
+from celery_app import app
+from tasks.packages.tools import sleep_random
+
+
+logger = get_task_logger(__name__)
 
 
 class Params(BaseModel):
