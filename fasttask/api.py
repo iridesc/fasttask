@@ -1,20 +1,28 @@
 import os
+import uuid
 import secrets
 import traceback
+import uvicorn
 from enum import Enum
 from typing import Any, Union, Annotated
 from importlib import import_module
 from pydantic import BaseModel
 from starlette.responses import FileResponse
-from fastapi import Depends, FastAPI, HTTPException, status
+from fastapi import Depends, FastAPI, HTTPException, status, UploadFile
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 
 from celery_app import app as celery_app
 from tools import load_task_names
+from setting import project_title, project_description, project_summary, project_version
 
 import setting
 
-app = FastAPI()
+app = FastAPI(
+    title=project_title,
+    description=project_description,
+    summary=project_summary,
+    version=project_version,
+)
 security = HTTPBasic()
 
 
@@ -125,6 +133,22 @@ def get_download_api():
     return download
 
 
+def get_upload_api():
+    @app.post("/upload")
+    def upload(file: UploadFile, username: Annotated[str, Depends(get_current_username)]):
+        if ".." in file.filename:
+            raise Exception(f"{username:}: .. is not allowed in path: {file.filename}")
+
+        filename = f"upload_{uuid.uuid4()}_{file.filename}"
+        with open(os.path.join("./files/", filename), 'wb') as f:
+            for i in iter(lambda: file.file.read(1024 * 1024 * 10), b''):
+                f.write(i)
+
+        return {"file_name": filename}
+
+    return upload
+
+
 globals_dict = globals()
 for task_name in load_task_names():
     globals_dict[f"run_{task_name}"], globals_dict[f"create_{task_name}"], globals_dict[f"check_{task_name}"] = makeup_api(
@@ -132,3 +156,10 @@ for task_name in load_task_names():
 
 if setting.file_download:
     globals_dict["download"] = get_download_api()
+
+if setting.file_upload:
+    globals_dict["upload"] = get_upload_api()
+
+
+if __name__ == '__main__':
+    uvicorn.run('api:app', host='0.0.0.0', port=8005, reload=True)
