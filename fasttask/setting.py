@@ -1,13 +1,15 @@
 # fasttask setting
-file_download = True
-file_upload = True
-user_to_passwd = {
-    # "john wick": "john_passwd"
-}
 project_title = "⚡Fasttask⚡"
 project_summary = "Fasttask Project"
 project_description = "this is a fasttask project!"
 project_version = "ver: 🐕"
+
+file_download = True
+file_upload = True
+user_to_passwd = {
+    "john wick": "john_passwd"
+}
+
 
 # celery setting use namespeace "celery"
 # ref: https://docs.celeryq.dev/en/stable/userguide/configuration.html

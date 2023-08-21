@@ -40,7 +40,7 @@ class TaskState(Enum):
 
 
 class DownloadFileInfo(BaseModel):
-    file_path: str = "lp.jpg"
+    file_name: str = "lp.jpg"
 
 
 def get_current_username(credentials: Annotated[HTTPBasicCredentials, Depends(security)]):
@@ -64,7 +64,7 @@ def try_import_Data(task_model, DataName):
     try:
         return getattr(task_model, DataName)
     except Exception as error:
-        print(f"{task_model:} {DataName:} not found! {error:}")
+        print(f"{task_model=} {DataName=} not found! {error=}")
         return Any
 
 
@@ -122,13 +122,13 @@ def makeup_api(task_name):
 
 def get_download_api():
     @app.get("/download")
-    def download(file_path, username: Annotated[str, Depends(get_current_username)]):
-        if ".." in file_path:
-            raise Exception(f"{username:}: .. is not allowed in path")
-        file_path = os.path.join("./files/", file_path)
+    def download(file_name, username: Annotated[str, Depends(get_current_username)]):
+        if ".." in file_name:
+            raise Exception(f"{username=}: .. is not allowed in path")
+        file_path = os.path.join("./files/", file_name)
         file_path = os.path.abspath(file_path)
         filename = os.path.basename(file_path)
-        print(f"{username:}: download: {filename:} {file_path:}:")
+        print(f"{username=}: download: {filename=} {file_path=}:")
         return FileResponse(file_path, filename=filename)
     return download
 
@@ -137,7 +137,7 @@ def get_upload_api():
     @app.post("/upload")
     def upload(file: UploadFile, username: Annotated[str, Depends(get_current_username)]):
         if ".." in file.filename:
-            raise Exception(f"{username:}: .. is not allowed in path: {file.filename}")
+            raise Exception(f"{username=}: .. is not allowed in {file.filename=}")
 
         filename = f"upload_{uuid.uuid4()}_{file.filename}"
         with open(os.path.join("./files/", filename), 'wb') as f:
