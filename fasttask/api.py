@@ -3,7 +3,6 @@ import uuid
 import secrets
 import traceback
 
-from rich import print_json
 import uvicorn
 from enum import Enum
 from typing import Any, Union, Annotated
