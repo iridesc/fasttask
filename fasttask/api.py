@@ -14,7 +14,7 @@ from fastapi.security import HTTPBasic, HTTPBasicCredentials
 
 from celery_app import app as celery_app
 from tools import load_task_names
-from setting import project_title, project_description, project_summary, project_version
+from setting import project_title, project_description, project_summary, project_version, api_docs
 
 import setting
 
@@ -23,6 +23,8 @@ app = FastAPI(
     description=project_description,
     summary=project_summary,
     version=project_version,
+    docs_url="/docs" if api_docs else None,
+    redoc_url="/redoc" if api_docs else None,
 )
 security = HTTPBasic()
 

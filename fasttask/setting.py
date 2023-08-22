@@ -3,7 +3,7 @@ project_title = "⚡Fasttask⚡"
 project_summary = "Fasttask Project"
 project_description = "this is a fasttask project!"
 project_version = "ver: 🐕"
-
+api_docs = True
 file_download = True
 file_upload = True
 user_to_passwd = {
