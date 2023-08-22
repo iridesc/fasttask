@@ -2,6 +2,8 @@ import os
 import uuid
 import secrets
 import traceback
+
+from rich import print_json
 import uvicorn
 from enum import Enum
 from typing import Any, Union, Annotated
@@ -83,7 +85,10 @@ def makeup_api(task_name):
         result: Union[Result, str]
 
     @app.post(f"/run/{task_name}/", response_model=ResultInfo)
-    def run(params: Params):
+    def run(params: Params, username: Annotated[str, Depends(get_current_username)]):
+
+        print(f"api run: {username=}")
+
         try:
             result = Result(**task(**params.model_dump()))
             state = TaskState.success.value
@@ -94,7 +99,9 @@ def makeup_api(task_name):
         return ResultInfo(result=result, state=state)
 
     @app.post(f"/create/{task_name}/", response_model=ResultInfo)
-    def create(params: Params):
+    def create(params: Params, username: Annotated[str, Depends(get_current_username)]):
+
+        print(f"ap create: {username=}")
 
         try:
             async_result = task.delay(**params.model_dump())
@@ -108,7 +115,10 @@ def makeup_api(task_name):
         return result_info
 
     @app.get(f"/check/{task_name}", response_model=ResultInfo)
-    def check(result_id: str):
+    def check(result_id: str, username: Annotated[str, Depends(get_current_username)]):
+
+        print(f"ap check: {username=}")
+
         async_result = celery_app.AsyncResult(result_id)
         return ResultInfo(
             id=result_id,
