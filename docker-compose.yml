@@ -8,3 +8,6 @@ services:
     command: sh run.sh
     ports:
       - "9001:80"
+    volumes:
+      - ./files:/fasttask/files
+ 
