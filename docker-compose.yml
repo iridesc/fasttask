@@ -3,6 +3,7 @@ version: "3.9"
 services:
   fasttask:
     image: fasttask
+    container_name: fasttask 
     restart: always
     command: sh run.sh
     ports:
