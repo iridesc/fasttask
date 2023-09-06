@@ -5,7 +5,5 @@ services:
     image: fasttask
     restart: always
     command: sh run.sh
-    depends_on:
-      - redis
     ports:
       - "9001:80"
