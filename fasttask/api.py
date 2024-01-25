@@ -1,4 +1,5 @@
 import os
+import sys
 import uuid
 import secrets
 import traceback
@@ -18,6 +19,10 @@ from setting import project_title, project_description, project_summary, project
 
 import setting
 
+
+sys.path.append("tasks")
+
+running_id = str(uuid.uuid4())
 app = FastAPI(
     title=project_title,
     description=project_description,
@@ -73,10 +78,10 @@ def try_import_Data(task_model, DataName):
 
 def makeup_api(task_name):
     print("importing ", task_name)
+
+    task = getattr(import_module(package="loaded_tasks", name=f".{task_name}"), f"_{task_name}")
+
     task_model = import_module(package="tasks", name=f".{task_name}")
-
-    task = getattr(task_model, task_name)
-
     Result = try_import_Data(task_model, "Result")
     Params = try_import_Data(task_model, "Params")
 
@@ -102,11 +107,10 @@ def makeup_api(task_name):
     @app.post(f"/create/{task_name}/", response_model=ResultInfo)
     def create(params: Params, username: Annotated[str, Depends(get_current_username)]):
 
-        print(f"ap create: {username=}")
+        print(f"api create: {username=}")
 
         try:
-            async_result = task.delay(**params.model_dump())
-
+            async_result = task.apply_async(args=(), kwargs=params.model_dump(), task_id=f"{running_id}-{uuid.uuid4()}")
         except Exception:
 
             result_info = ResultInfo(result=traceback.format_exc())
@@ -118,7 +122,14 @@ def makeup_api(task_name):
     @app.get(f"/check/{task_name}", response_model=ResultInfo)
     def check(result_id: str, username: Annotated[str, Depends(get_current_username)]):
 
-        print(f"ap check: {username=}")
+        print(f"api check: {username=}")
+
+        if not result_id.startswith(running_id):
+            return ResultInfo(
+                id=result_id,
+                state=TaskState.failure,
+                result=f"{result_id=} not exist, current {running_id=}"
+            )
 
         async_result = celery_app.AsyncResult(result_id)
         return ResultInfo(
@@ -161,7 +172,7 @@ def get_upload_api():
 
 
 globals_dict = globals()
-for task_name in load_task_names():
+for task_name in load_task_names("tasks"):
     globals_dict[f"run_{task_name}"], globals_dict[f"create_{task_name}"], globals_dict[f"check_{task_name}"] = makeup_api(
         task_name)
 
