@@ -1,5 +1,6 @@
 #!/bin/bash
 
+python load_tasks.py &
 redis-server /etc/redis/redis.conf
 nohup celery -A celery_app worker --loglevel=info >/var/log/celery.log 2>&1 &
 nohup uvicorn api:app --host 0.0.0.0 --port 80 --reload >/var/log/uvicorn.log 2>&1 &

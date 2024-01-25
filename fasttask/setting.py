@@ -10,7 +10,7 @@ api_redoc = True
 file_download = True
 file_upload = True
 user_to_passwd = {
-    "john wick": "john_passwd"
+    "ZhangSan": "passwd"
 }
 
 
