@@ -8,6 +8,18 @@ services:
     command: sh run.sh
     ports:
       - "9001:80"
+      # 在node_type为distributed_master需要配置以下三项
+      # - "9000:6379"
     volumes:
       - ./files:/fasttask/files
- 
+    environment:
+      # node_type 
+      # single_node: 单一节点提供接口+执行任务, 仅需要映射80端口即可
+      # distributed_master: 分布式部署部署的主节点 提供api与存储后端, 需要映射80端口, 6379端口
+      # distributed_worker: 分布式部署部署的从节点 提供cerery任务执行环境 需要环境变量配置主节点ip, 与6379的映射端口,
+      - node_type=single_node
+      
+      # 在node_type为distributed_worker需要修改以下三项
+      - master_host=127.0.0.1
+      - master_port=6379
+      - master_passwd=passwd
