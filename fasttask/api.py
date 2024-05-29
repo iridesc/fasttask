@@ -90,7 +90,7 @@ def makeup_api(task_name):
         state: TaskState = TaskState.failure.value
         result: Union[Result, str]
 
-    @app.post(f"/run/{task_name}/", response_model=ResultInfo)
+    @app.post(f"/run/{task_name}", response_model=ResultInfo)
     def run(params: Params, username: Annotated[str, Depends(get_current_username)]):
 
         print(f"api run: {username=}")
@@ -104,7 +104,7 @@ def makeup_api(task_name):
 
         return ResultInfo(result=result, state=state)
 
-    @app.post(f"/create/{task_name}/", response_model=ResultInfo)
+    @app.post(f"/create/{task_name}", response_model=ResultInfo)
     def create(params: Params, username: Annotated[str, Depends(get_current_username)]):
 
         print(f"api create: {username=}")
