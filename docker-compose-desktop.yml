@@ -1,0 +1,41 @@
+version: "3.9"
+
+services:
+  fasttask:
+    image: fasttask:desktop
+    restart: always
+    container_name: fasttask
+
+    ports:
+      # 在single_node 与 distributed_master 需要映射api端口 
+      - "9001:80"
+      # 在distributed_master需要映射任务队列端口
+      # - "9000:6379"
+      
+      # webtop  related
+      - 3000:3000
+      - 3001:3001
+
+    volumes:
+      - ./files:/fasttask/files
+
+    environment:
+      - TZ=Etc/UTC
+
+      # single_node: 单一节点提供接口+执行任务
+      - node_type=single_node
+
+      # # distributed_master: 分布式部署部署的主节点 提供api与任务队列后端
+      # - node_type=distributed_master
+      # - task_queue_passwd=passwd
+
+      # # distributed_worker: 分布式部署部署的从节点 负责cerery任务执行环境,需要配置distributed_master的主机地址, 任务队列端口与密码
+      # - node_type=distributed_worker
+      # - master_host=0.0.0.0
+      # - task_queue_port=9000
+      # - task_queue_passwd=passwd
+
+      # webtop  related
+      - PUID=1000
+      - PGID=1000
+      - TITLE=fasttask-desktop

@@ -1,0 +1,14 @@
+FROM linuxserver/webtop:debian-xfce
+
+ENV PYTHONDONTWRITEBYTECODE=1
+RUN apt update && apt install -y redis-server
+RUN apt install -y python3 python3-pip
+RUN ln -s /usr/bin/python3 /usr/bin/python
+
+COPY  init /init
+
+COPY fasttask /fasttask
+WORKDIR /fasttask
+RUN pip install -r req.txt --break-system-packages
+EXPOSE 3000
+VOLUME /config
