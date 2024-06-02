@@ -3,8 +3,8 @@ version: "3.9"
 services:
   fasttask:
     image: fasttask:desktop
+    container_name: fasttask-desktop
     restart: always
-    container_name: fasttask
 
     ports:
       # 在single_node 与 distributed_master 需要映射api端口 
@@ -14,13 +14,13 @@ services:
       
       # webtop  related
       - 3000:3000
-      - 3001:3001
 
     volumes:
       - ./files:/fasttask/files
 
     environment:
-      - TZ=Etc/UTC
+      # 缓存快照间隔时间s
+      - rdb_snapshot_gap=600
 
       # single_node: 单一节点提供接口+执行任务
       - node_type=single_node
@@ -39,3 +39,4 @@ services:
       - PUID=1000
       - PGID=1000
       - TITLE=fasttask-desktop
+      - PASSWORD=webtop_passwd

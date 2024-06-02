@@ -8,7 +8,7 @@ sys.path.append("tasks")
 
 from tasks.task_name import task_name
 
- 
+
 @app.task
 def _task_name(*args, **kwargs):
     return task_name(*args, **kwargs)

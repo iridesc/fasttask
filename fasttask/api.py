@@ -1,3 +1,4 @@
+import json
 import os
 import sys
 import uuid
@@ -5,6 +6,8 @@ import secrets
 import traceback
 
 import uvicorn
+import redis
+
 from enum import Enum
 from typing import Any, Union, Annotated
 from importlib import import_module
@@ -74,6 +77,33 @@ def try_import_Data(task_model, DataName):
     except Exception as error:
         print(f"{task_model=} {DataName=} not found! {error=}")
         return Any
+
+
+@app.get("/status_info")
+def status_info(username: Annotated[str, Depends(get_current_username)]):
+
+    r = redis.Redis(
+        host=os.environ["master_host"],
+        port=os.environ["task_queue_port"],
+        password=os.environ["task_queue_passwd"],
+        db="2",
+        decode_responses=True
+    )
+    status_to_amount = dict()
+    task_to_statistics_info = dict()
+    status_info = {
+        "username": username,
+        "status_to_amount": status_to_amount,
+        "task_to_amount_status_statics": task_to_statistics_info
+    }
+
+    for key in r.scan_iter(match="*"):
+        task_info = json.loads(r.get(key))
+        status_to_amount.setdefault(task_info["status"], 0)
+        status_to_amount[task_info["status"]] += 1
+        task_to_statistics_info.setdefault(task_info["name"], dict()).setdefault(task_info["status"], 0)
+        task_to_statistics_info[task_info["name"]][task_info["status"]] += 1
+    return status_info
 
 
 def makeup_api(task_name):

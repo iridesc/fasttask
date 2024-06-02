@@ -1,12 +1,11 @@
 version: "3.9"
 
 services:
-  fasttask-worker:
+  fasttask:
     image: fasttask
-    restart: always
-    command: sh run.sh
-
     container_name: fasttask
+    command: sh run.sh
+    restart: always
 
     ports:
       # 在single_node 与 distributed_master 需要映射api端口 
@@ -18,6 +17,9 @@ services:
       - ./files:/fasttask/files
 
     environment:
+      # 缓存快照间隔时间s
+      - rdb_snapshot_gap=600
+
       # single_node: 单一节点提供接口+执行任务
       - node_type=single_node
 
