@@ -79,32 +79,55 @@ def try_import_Data(task_model, DataName):
         return Any
 
 
+def load_redis_task_infos() -> dict:
+
+    r = redis.Redis(
+        host=os.environ["master_host"],
+        port=os.environ["task_queue_port"],
+        password=os.environ["task_queue_passwd"],
+        db="1",
+        decode_responses=True
+    )
+    task_id_to_infos = dict()
+    for i in range(r.llen('celery')):
+
+        raw_info = json.loads(r.lindex('celery', i))
+        task_id_to_infos[raw_info["headers"]["id"]] = {
+            "task": raw_info["headers"]["task"],
+            "status": TaskState.pending.value
+        }
+
+    r = redis.Redis(
+        host=os.environ["master_host"],
+        port=os.environ["task_queue_port"],
+        password=os.environ["task_queue_passwd"],
+        db="2",
+        decode_responses=True
+    )
+
+    for key in r.scan_iter(match="*"):
+
+        raw_info = json.loads(r.get(key))
+        task_id_to_infos[raw_info["task_id"]] = {
+            "task": raw_info["name"],
+            "status": raw_info["status"]
+        }
+    return task_id_to_infos
+
+
 @app.get("/status_info")
 def status_info(username: Annotated[str, Depends(get_current_username)]):
 
     task_to_statistics_info = dict()
     status_to_amount = dict()
 
-    for db in ("1", "2"):
-        r = redis.Redis(
-            host=os.environ["master_host"],
-            port=os.environ["task_queue_port"],
-            password=os.environ["task_queue_passwd"],
-            db=db,
-            decode_responses=True
-        )
-
-        for key in r.scan_iter(match="*"):
-
-            task_info = json.loads(r.get(key))
-
-            status = task_info.get("status", TaskState.pending)
-            name = task_info["name"]
-
-            status_to_amount.setdefault(status, 0)
-            status_to_amount[status] += 1
-            task_to_statistics_info.setdefault(name, dict()).setdefault(status, 0)
-            task_to_statistics_info[name][status] += 1
+    for task_info in load_redis_task_infos().values():
+        status = task_info["status"]
+        task = task_info["task"]
+        status_to_amount.setdefault(status, 0)
+        status_to_amount[status] += 1
+        task_to_statistics_info.setdefault(task, dict()).setdefault(status, 0)
+        task_to_statistics_info[task][status] += 1
 
     return {
         "username": username,
@@ -114,7 +137,7 @@ def status_info(username: Annotated[str, Depends(get_current_username)]):
 
 
 def makeup_api(task_name):
-    print("importing ", task_name)
+    print("makeup_api: importing ", task_name)
 
     task = getattr(import_module(package="loaded_tasks", name=f".{task_name}"), f"_{task_name}")
 
@@ -130,8 +153,6 @@ def makeup_api(task_name):
     @app.post(f"/run/{task_name}", response_model=ResultInfo)
     def run(params: Params, username: Annotated[str, Depends(get_current_username)]):
 
-        print(f"api run: {username=}")
-
         try:
             result = Result(**task(**params.model_dump()))
             state = TaskState.success.value
@@ -143,8 +164,6 @@ def makeup_api(task_name):
 
     @app.post(f"/create/{task_name}", response_model=ResultInfo)
     def create(params: Params, username: Annotated[str, Depends(get_current_username)]):
-
-        print(f"api create: {username=}")
 
         try:
             async_result = task.apply_async(args=(), kwargs=params.model_dump(), task_id=f"{running_id}-{uuid.uuid4()}")
@@ -159,19 +178,17 @@ def makeup_api(task_name):
     @app.get(f"/check/{task_name}", response_model=ResultInfo)
     def check(result_id: str, username: Annotated[str, Depends(get_current_username)]):
 
-        print(f"api check: {username=}")
-
         if not result_id.startswith(running_id):
             return ResultInfo(
                 id=result_id,
-                state=TaskState.failure,
+                state=TaskState.failure.value,
                 result=f"{result_id=} not exist, current {running_id=}"
             )
 
         async_result = celery_app.AsyncResult(result_id)
         if async_result.state == TaskState.success.value:
             result = Result(**async_result.result)
-        elif async_result.state == TaskState.failure:
+        elif async_result.state == TaskState.failure.value:
             result = str(async_result.traceback)
         else:
             result = str(async_result.result)
