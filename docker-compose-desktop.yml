@@ -6,6 +6,9 @@ services:
     container_name: fasttask-desktop
     restart: always
 
+    security_opt:
+      - seccomp:unconfined
+
     ports:
       # 在single_node 与 distributed_master 需要映射api端口 
       - "9001:80"
@@ -34,7 +37,12 @@ services:
       # - master_host=0.0.0.0
       # - task_queue_port=9000
       # - task_queue_passwd=passwd
-
+      
+      # 启用的任务
+      # - enabled_tasks=task1,task2,task3
+      # 禁用的任务
+      # - disabled_tasks=task1,task2,task3
+      
       # webtop  related
       - PUID=1000
       - PGID=1000

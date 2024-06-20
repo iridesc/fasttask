@@ -1,0 +1,48 @@
+version: "3.9"
+
+services:
+  fasttask-master:
+    image: fasttask:latest
+    container_name: fasttask-master
+    command: sh run.sh
+    restart: always
+
+    ports:
+      # 在single_node 与 distributed_master 需要映射api端口 
+      - "9001:80"
+      # 在distributed_master需要映射任务队列端口
+      - "9000:6379"
+
+    volumes:
+      - ./files-master:/fasttask/files
+
+    environment:
+      # 缓存快照间隔时间s
+      - rdb_snapshot_gap=600
+
+      # # distributed_master: 分布式部署部署的主节点 提供api与任务队列后端
+      - node_type=distributed_master
+      - task_queue_passwd=passwd
+  
+  fasttask-worker:
+    image: fasttask:latest
+    container_name: fasttask-worker
+    command: sh run.sh
+    restart: always
+
+    volumes:
+      - ./files-worker:/fasttask/files
+
+    environment:
+
+      # distributed_worker: 分布式部署部署的从节点 负责cerery任务执行环境,需要配置distributed_master的主机地址, 任务队列端口与密码
+      - node_type=distributed_worker
+      - master_host=0.0.0.0
+      - task_queue_port=9000
+      - task_queue_passwd=passwd
+
+      # # 启用的任务
+      # - enabled_tasks=get_circle_area
+      # # 禁用的任务
+      # - disabled_tasks=get_hypotenuse
+  

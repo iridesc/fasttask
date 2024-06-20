@@ -32,3 +32,9 @@ services:
       # - master_host=0.0.0.0
       # - task_queue_port=9000
       # - task_queue_passwd=passwd
+
+      # 启用的任务
+      - enabled_tasks=get_circle_area
+      # 禁用的任务
+      - disabled_tasks=get_hypotenuse
+  
