@@ -20,9 +20,9 @@ def load_tasks(from_folder, to_folder):
 
     rm_tmp_folder(to_folder)
 
-    # 创建文件夹
     os.mkdir(to_folder)
     for task_name in load_task_names(from_folder):
+        print(f"loading {task_name=}")
         with open(os.path.join(to_folder, f"{task_name}.py"), "w") as f:
             f.write(task_file_content.replace("task_name", task_name))
     print("load_tasks done!")
@@ -30,4 +30,7 @@ def load_tasks(from_folder, to_folder):
 
 if __name__ == "__main__":
     loaded_folder = "loaded_tasks"
-    load_tasks(from_folder="tasks", to_folder="loaded_tasks")
+    load_tasks(
+        from_folder="tasks",
+        to_folder="loaded_tasks"
+    )
