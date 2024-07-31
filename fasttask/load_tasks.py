@@ -16,21 +16,19 @@ def _task_name(*args, **kwargs):
 
 
 def load_tasks(from_folder, to_folder):
-    print(f"loading {from_folder=} -> {to_folder=}")
 
     rm_tmp_folder(to_folder)
-
+    loaded_tasks = list()
     os.mkdir(to_folder)
     for task_name in load_task_names(from_folder):
-        print(f"loading {task_name=}")
         with open(os.path.join(to_folder, f"{task_name}.py"), "w") as f:
             f.write(task_file_content.replace("task_name", task_name))
-    print("load_tasks done!")
+        loaded_tasks.append(task_name)
+    return loaded_tasks
 
 
 if __name__ == "__main__":
-    loaded_folder = "loaded_tasks"
-    load_tasks(
+    print(','.join(load_tasks(
         from_folder="tasks",
         to_folder="loaded_tasks"
-    )
+    )))
