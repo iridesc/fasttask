@@ -2,7 +2,7 @@ version: "3.9"
 
 services:
   fasttask-master:
-    image: fasttask:latest
+    image: fasttask:test
     container_name: fasttask-master
     command: sh run.sh
     restart: always
@@ -23,10 +23,24 @@ services:
       # # distributed_master: 分布式部署部署的主节点 提供api与任务队列后端
       - node_type=distributed_master
       - task_queue_passwd=passwd
-  
-  fasttask-worker:
-    image: fasttask:latest
-    container_name: fasttask-worker
+
+      - result_expires=3600
+      - worker_pool=prefork
+      - worker_concurrency=4
+
+      # api设置
+      - api_docs=True
+      - api_redoc=True
+      - api_status_info=True
+      - api_run=True
+      - api_create=True
+      - api_check=True
+      - api_file_download=True
+      - api_file_upload=True
+
+  fasttask-worker-get_circle_area:
+    image: fasttask:test
+    container_name: fasttask-worker-get_circle_area
     command: sh run.sh
     restart: always
 
@@ -41,8 +55,39 @@ services:
       - task_queue_port=9000
       - task_queue_passwd=passwd
 
-      # # 启用的任务
-      # - enabled_tasks=get_circle_area
-      # # 禁用的任务
-      # - disabled_tasks=get_hypotenuse
+      # 启用的任务
+      - enabled_tasks=get_circle_area
+      # 禁用的任务
+      - disabled_tasks=get_hypotenuse
+  
+      - result_expires=3600
+      - worker_pool=prefork
+      - worker_concurrency=4
+  
+
+  fasttask-worker-get_hypotenuse:
+    image: fasttask:test
+    container_name: fasttask-worker-get_hypotenuse
+    command: sh run.sh
+    restart: always
+
+    volumes:
+      - ./files-worker:/fasttask/files
+
+    environment:
+
+      # distributed_worker: 分布式部署部署的从节点 负责cerery任务执行环境,需要配置distributed_master的主机地址, 任务队列端口与密码
+      - node_type=distributed_worker
+      - master_host=0.0.0.0
+      - task_queue_port=9000
+      - task_queue_passwd=passwd
+
+      # 启用的任务
+      - enabled_tasks=get_hypotenuse
+      # 禁用的任务
+      - disabled_tasks=get_circle_area
+  
+      - result_expires=3600
+      - worker_pool=prefork
+      - worker_concurrency=4
   
