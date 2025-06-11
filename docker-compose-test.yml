@@ -35,6 +35,7 @@ services:
       - api_run=True
       - api_create=True
       - api_check=True
+      - api_revoke=True
       - api_file_download=True
       - api_file_upload=True
 
