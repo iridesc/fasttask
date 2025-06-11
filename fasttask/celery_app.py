@@ -39,6 +39,7 @@ app.conf.update({
     'result_expires': result_expires,
     'worker_pool': worker_pool,
     'worker_concurrency': worker_concurrency,
+    'broker_connection_retry_on_startup': True,
 })
 
 if __name__ == '__main__':
