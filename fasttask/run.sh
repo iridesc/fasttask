@@ -60,12 +60,13 @@ fi
 cd /fasttask
 
 loaded_tasks=$(python load_tasks.py)
+echo ""
+echo ">>>>>>>>>>>>>>>>>>>      ..      <<<<<<<<<<<<<<<<<<<"
+echo ">>>>>>>>>>>>>>>>>>>     ....     <<<<<<<<<<<<<<<<<<<"
+echo ">>>>>>>>>>>>>>>>>>>   FastTask   <<<<<<<<<<<<<<<<<<<"
+echo ">>>>>>>>>>>>>>>>>>>  ..........  <<<<<<<<<<<<<<<<<<<"
+echo ">>>>>>>>>>>>>>>>>>> ............ <<<<<<<<<<<<<<<<<<<"
 
-echo ">>>>>>>>>>>>>>>>>>>    ..    <<<<<<<<<<<<<<<<<<<"
-echo ">>>>>>>>>>>>>>>>>>>   ....   <<<<<<<<<<<<<<<<<<<"
-echo ">>>>>>>>>>>>>>>>>>> FastTask <<<<<<<<<<<<<<<<<<<"
-echo ">>>>>>>>>>>>>>>>>>>   ....   <<<<<<<<<<<<<<<<<<<"
-echo ">>>>>>>>>>>>>>>>>>>    ..    <<<<<<<<<<<<<<<<<<<"
 echo ""
 echo "---->> loaded_tasks=$loaded_tasks"
 echo "---->> result_expires=$result_expires"
@@ -91,7 +92,10 @@ if [ "$node_type" = "single_node" ]; then
 
     echo "---->> Starting Uvicorn with HTTPS..."
     nohup uvicorn api:app --host 0.0.0.0 --port 443 --reload --ssl-keyfile "$SSL_KEYFILE" --ssl-certfile "$SSL_CERTFILE" >/var/log/uvicorn.log 2>&1 &
-    tail -f /var/log/celery.log /var/log/uvicorn.log /var/log/redis.log
+
+    echo ""
+    sleep 3
+    tail -f -n 100 /var/log/celery.log /var/log/uvicorn.log /var/log/redis.log
 
 elif [ "$node_type" = "distributed_master" ]; then
     echo "---->> Starting Redis on all interfaces (0.0.0.0)..."
@@ -108,12 +112,18 @@ elif [ "$node_type" = "distributed_master" ]; then
 
     echo "---->> Starting Uvicorn with HTTPS..."
     nohup uvicorn api:app --host 0.0.0.0 --port 443 --reload --ssl-keyfile "$SSL_KEYFILE" --ssl-certfile "$SSL_CERTFILE" >/var/log/uvicorn.log 2>&1 &
-    tail -f /var/log/celery.log /var/log/uvicorn.log /var/log/redis.log
+
+    echo ""
+    sleep 3
+    tail -f -n 100 /var/log/celery.log /var/log/uvicorn.log /var/log/redis.log
 
 elif [ "$node_type" = "distributed_worker" ]; then
     echo "---->> Starting celery workers..."
     nohup celery -A celery_app worker --queues "$loaded_tasks" --loglevel=info >/var/log/celery.log 2>&1 &
-    tail -f /var/log/celery.log
+
+    echo ""
+    sleep 3
+    tail -f -n 100 /var/log/celery.log
 
 else
     echo "---->> Error: Unsupported node_type: $node_type. Please set a valid value and try again."
