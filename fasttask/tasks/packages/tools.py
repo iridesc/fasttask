@@ -13,12 +13,11 @@ cache_db = redis.Redis(
     host=os.environ["master_host"],
     port=os.environ["task_queue_port"],
     password=os.environ["task_queue_passwd"],
-    db=0
+    db=0,
 )
 
 
 def cache_result(ttl=3600):
-
     def decorator(func):
         @wraps(func)
         def wrapper(*args, **kwargs):
@@ -35,6 +34,7 @@ def cache_result(ttl=3600):
             return result
 
         return wrapper
+
     return decorator
 
 
@@ -43,4 +43,5 @@ def xx(x):
 
 
 def sleep_random():
-    time.sleep(random() * 30)
+    for _ in range(10):
+        time.sleep(random() * 5)

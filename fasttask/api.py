@@ -1,6 +1,7 @@
 import json
 import os
 import sys
+import time
 import uuid
 import secrets
 import traceback
@@ -52,6 +53,17 @@ class TaskState(Enum):
     retry = "RETRY"
 
 
+class ActionStatus(Enum):
+    success = "success"
+    failure = "failure"
+
+
+class ActionResp(BaseModel):
+    status: TaskState = ActionStatus.failure
+    result: Any = ""
+    message: str = ""
+
+
 class DownloadFileInfo(BaseModel):
     file_name: str = "lp.jpg"
 
@@ -63,15 +75,20 @@ def load_user_to_passwd() -> dict:
         return json.load(f)
 
 
-def get_current_username(credentials: Annotated[HTTPBasicCredentials, Depends(security)]):
+def get_current_username(
+    credentials: Annotated[HTTPBasicCredentials, Depends(security)],
+):
     user_to_passwd = load_user_to_passwd()
     if not user_to_passwd:
         return "Anonymous"
 
-    if not (credentials.username in user_to_passwd and secrets.compare_digest(
-        credentials.password.encode("utf8"), user_to_passwd[credentials.username].encode("utf8")
-    )):
-
+    if not (
+        credentials.username in user_to_passwd
+        and secrets.compare_digest(
+            credentials.password.encode("utf8"),
+            user_to_passwd[credentials.username].encode("utf8"),
+        )
+    ):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="UNAUTHORIZED",
@@ -90,21 +107,19 @@ def try_import_Data(task_model, DataName) -> type:
 
 
 def load_redis_task_infos() -> dict:
-
     r = redis.Redis(
         host=os.environ["master_host"],
         port=os.environ["task_queue_port"],
         password=os.environ["task_queue_passwd"],
         db="1",
-        decode_responses=True
+        decode_responses=True,
     )
     task_id_to_infos = dict()
-    for i in range(r.llen('celery')):
-
-        raw_info = json.loads(r.lindex('celery', i))
+    for i in range(r.llen("celery")):
+        raw_info = json.loads(r.lindex("celery", i))
         task_id_to_infos[raw_info["headers"]["id"]] = {
             "task": raw_info["headers"]["task"],
-            "status": TaskState.pending.value
+            "status": TaskState.pending.value,
         }
 
     r = redis.Redis(
@@ -112,23 +127,22 @@ def load_redis_task_infos() -> dict:
         port=os.environ["task_queue_port"],
         password=os.environ["task_queue_passwd"],
         db="2",
-        decode_responses=True
+        decode_responses=True,
     )
 
     for key in r.scan_iter(match="*"):
-
         raw_info = json.loads(r.get(key))
         task_id_to_infos[raw_info["task_id"]] = {
             "task": raw_info["name"],
-            "status": raw_info["status"]
+            "status": raw_info["status"],
         }
     return task_id_to_infos
 
 
 if get_bool_env("api_status_info"):
+
     @app.get("/status_info")
     def status_info(username: Annotated[str, Depends(get_current_username)]):
-
         task_to_statistics_info = dict()
         status_to_amount = dict()
 
@@ -143,12 +157,14 @@ if get_bool_env("api_status_info"):
         return {
             "username": username,
             "status_to_amount": status_to_amount,
-            "task_to_amount_status_statics": task_to_statistics_info
+            "task_to_amount_status_statics": task_to_statistics_info,
         }
+
     print("-> api_status_info enabled.")
 
 
 if get_bool_env("api_file_download"):
+
     @app.get("/download")
     def download(file_name, username: Annotated[str, Depends(get_current_username)]):
         if ".." in file_name:
@@ -158,26 +174,73 @@ if get_bool_env("api_file_download"):
         filename = os.path.basename(file_path)
         print(f"{username=}: download: {filename=} {file_path=}:")
         return FileResponse(file_path, filename=filename)
+
     print("-> api_file_download enabled.")
 
 
 if get_bool_env("api_file_upload"):
+
     @app.post("/upload")
-    def upload(file: UploadFile, username: Annotated[str, Depends(get_current_username)]):
+    def upload(
+        file: UploadFile, username: Annotated[str, Depends(get_current_username)]
+    ):
         if ".." in file.filename:
             raise Exception(f"{username=}: .. is not allowed in {file.filename=}")
 
         filename = f"upload_{uuid.uuid4()}_{file.filename}"
-        with open(os.path.join("./files/", filename), 'wb') as f:
-            for i in iter(lambda: file.file.read(1024 * 1024 * 10), b''):
+        with open(os.path.join("./files/", filename), "wb") as f:
+            for i in iter(lambda: file.file.read(1024 * 1024 * 10), b""):
                 f.write(i)
 
         return {"file_name": filename}
+
     print("-> api_file_download enabled")
 
 
+if get_bool_env("api_revoke"):
+
+    @app.post(f"/revoke", response_model=ActionResp)
+    def revoke(result_id: str, username: Annotated[str, Depends(get_current_username)]):
+        resp = ActionResp()
+        if not result_id.startswith(running_id):
+            resp.message = "invalid task id"
+            return resp
+
+        async_result = celery_app.AsyncResult(result_id)
+
+        if async_result.state in [
+            TaskState.success.value,
+            TaskState.failure.value,
+            TaskState.revoked.value,
+        ]:
+            resp.status = ActionStatus.success
+            resp.message = "task ended or revoked already"
+            return resp
+
+        async_result.revoke(terminate=True)
+
+        start_time = time.time()
+        while True:
+            time.sleep(1)
+            state = celery_app.AsyncResult(result_id).state
+            if state == TaskState.revoked.value:
+                break
+
+            print(f"waiting for to be revoked... {result_id=} {state=}")
+            if time.time() - start_time > 30:
+                resp.message = f"waiting for {result_id=} to be revoked timeout"
+                return resp
+
+        resp.status = ActionStatus.success.value
+        return resp
+
+    print("-> api_revoke enabled.")
+
+
 def get_task_apis(task_name):
-    task = getattr(import_module(package="loaded_tasks", name=f".{task_name}"), f"_{task_name}")
+    task = getattr(
+        import_module(package="loaded_tasks", name=f".{task_name}"), f"_{task_name}"
+    )
 
     task_model = import_module(package="tasks", name=f".{task_name}")
     Result = try_import_Data(task_model, "Result")
@@ -189,9 +252,11 @@ def get_task_apis(task_name):
         result: Union[Result, str]
 
     if get_bool_env("api_run"):
-        @app.post(f"/run/{task_name}", response_model=ResultInfo)
-        def run(params: Params, username: Annotated[str, Depends(get_current_username)]):
 
+        @app.post(f"/run/{task_name}", response_model=ResultInfo)
+        def run(
+            params: Params, username: Annotated[str, Depends(get_current_username)]
+        ):
             try:
                 result = Result(**task(**params.model_dump()))
                 state = TaskState.success.value
@@ -204,34 +269,40 @@ def get_task_apis(task_name):
         print(f"-> api_run: {task_name=} enabled.")
 
     if get_bool_env("api_create"):
-        @app.post(f"/create/{task_name}", response_model=ResultInfo)
-        def create(params: Params, username: Annotated[str, Depends(get_current_username)]):
 
+        @app.post(f"/create/{task_name}", response_model=ResultInfo)
+        def create(
+            params: Params, username: Annotated[str, Depends(get_current_username)]
+        ):
             try:
                 async_result = task.apply_async(
                     args=(),
                     kwargs=params.model_dump(),
                     task_id=f"{running_id}-{uuid.uuid4()}",
-                    queue=task_name
+                    queue=task_name,
                 )
             except Exception:
-
                 result_info = ResultInfo(result=traceback.format_exc())
             else:
-                result_info = ResultInfo(id=async_result.id, state=async_result.state, result="")
+                result_info = ResultInfo(
+                    id=async_result.id, state=async_result.state, result=""
+                )
 
             return result_info
+
         print(f"-> api_create: {task_name=} enabled.")
 
     if get_bool_env("api_check"):
-        @app.get(f"/check/{task_name}", response_model=ResultInfo)
-        def check(result_id: str, username: Annotated[str, Depends(get_current_username)]):
 
+        @app.get(f"/check/{task_name}", response_model=ResultInfo)
+        def check(
+            result_id: str, username: Annotated[str, Depends(get_current_username)]
+        ):
             if not result_id.startswith(running_id):
                 return ResultInfo(
                     id=result_id,
                     state=TaskState.failure.value,
-                    result=f"{result_id=} not exist, current {running_id=}"
+                    result=f"{result_id=} not exist, current {running_id=}",
                 )
 
             async_result = celery_app.AsyncResult(result_id)
@@ -242,11 +313,7 @@ def get_task_apis(task_name):
             else:
                 result = str(async_result.result)
 
-            return ResultInfo(
-                id=result_id,
-                state=async_result.state,
-                result=result
-            )
+            return ResultInfo(id=result_id, state=async_result.state, result=result)
 
         print(f"-> api_check: {task_name=} enabled.")
 
@@ -255,5 +322,5 @@ for task_name in load_task_names("tasks"):
     get_task_apis(task_name)
 
 
-if __name__ == '__main__':
-    uvicorn.run('api:app', host='0.0.0.0', port=8005, reload=True)
+if __name__ == "__main__":
+    uvicorn.run("api:app", host="0.0.0.0", port=8005, reload=True)

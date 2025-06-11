@@ -1,39 +1,128 @@
 ## FastTask
 
-### desc
+### 描述
   科技以套壳为本
   
-  使用fastapi 对celery的最简单封装, 仅暴露5个任务简单的接口以及两个文件接口(upload, download)， 具体调用可以拉取```irid/fasttask```镜像查看接口文档
+  使用 FastAPI 对 Celery 进行简单封装，提供以下功能：
+  - 5 个任务接口（创建任务、检测任务(获取结果)、同步调用任务）
+  - 1 个系统状态信息接口
+  - 1 个撤销任务接口
+  - 2 个文件接口
+  - 支持通过 HTTP Basic 认证进行权限控制
+  - 详细接口文档请参考 [FastAPI 文档](http://localhost:8005/docs) 或 [ReDoc 文档](http://localhost:8005/redoc)
 
-  1. 创建任务 -- create
-  2. 检测任务(获取结果) -- check
-  3. 同步调用任务 -- run
-  4. 文件上传接口 -- upload
-  5. 文件下载接口 -- download 
-  6. 系统状态信息 -- status_info 
 
-### 代办
-1. ~~支持task 使用redis服务 来实现缓存之类的功能~~
-2. ~~支持查看已经注册的任务~~ 
-3. ~~依赖的安装~~
-4. 创建任务时 需要增加异常处理
-5. ~~工作路径问题 celery_task/tasks/***~~
-6. 支持分布式结构
-7. ~~支持文档页面的项目名称展示~~
-8. ~~支持 worker数量在创建项目时配置~~
-9. ~~支持任务的输入输出直接展示在页面api接口中~~
-10. ~~创建项目时支持指定端口~~
-11. ~~支持同步任务执行的接口~~
-12. 支持选择性配置是否启用同步任务接口
-13. ~~日志展示~~
-14. ~~开发一个方便调用fastapi接口的模块~~ fasttask_manager
-15. ~~服务页面展示内容~~
-16. ~~启动日志优化~~
-17. 自动装饰celery task
-18. ~~权限控制~~
-19. 自动猜测输入输出
-20. ~~文件下载支持~~
-21. 增加任务取消接口
-22. 使用https
-23. 修复 tail 时日志找不到问题
+### 环境变量配置
+- `master_host`：Redis 主机地址。
+- `task_queue_port`：Redis 端口。
+- `task_queue_passwd`：Redis 密码。
+- `api_docs`：是否启用 API 文档。
+- `api_redoc`：是否启用 ReDoc 文档。
+- `api_status_info`：是否启用状态信息接口。
+- `api_file_download`：是否启用文件下载接口。
+- `api_file_upload`：是否启用文件上传接口。
+- `api_revoke`：是否启用撤销任务接口。
+- `api_run`：是否启用同步调用任务接口。
+- `api_create`：是否启用创建任务接口。
+- `api_check`：是否启用检测任务接口。
+
+### 运行和测试
+- 使用 `docker-compose.yml` 文件启动服务：`docker-compose up -d`。
+- 使用 `fasttask/run.sh` 脚本启动服务：`./fasttask/run.sh`。
+
+### API 端点和功能描述
+- `/status_info`：获取系统状态信息。
+- `/download`：文件下载接口。
+- `/upload`：文件上传接口。
+- `/revoke`：撤销任务接口。
+- `/run/{task_name}`：同步调用任务接口。
+- `/create/{task_name}`：创建任务接口。
+- `/check/{task_name}`：检测任务（获取结果）接口。
+
+
+### 配置文件
+- `setting.py`：包含项目的基本配置信息，如项目标题、描述、版本等。
+- `files/user_to_passwd.json`：包含用户名和密码的 JSON 文件，用于 HTTP Basic 认证。
+
+### 运行项目
+1. **启动服务**：
+   - 使用 `docker-compose.yml` 文件启动服务：
+     ```
+     docker-compose up -d
+     ```
+ 3. **测试 API**：
+   - 打开浏览器访问 [FastAPI 文档](http://localhost:8005/docs) 或 [ReDoc 文档](http://localhost:8005/redoc) 查看详细接口信息。
+   - 使用 `curl` 或 Postman 等工具测试 API 接口。
+
+### 任务示例
+- **get_circle_area**：计算圆的面积。
+  - **参数**：
+    - `r`：圆的半径（必须大于 0）。
+  - **返回值**：
+    - `area`：圆的面积。
+
+- **创建任务**：
+  - **请求**：
+    ```
+    POST /create/get_circle_area
+    Content-Type: application/json
+    Authorization: Basic <base64_encoded_username_password>
+    {
+      "r": 5
+    }
+    ```
+  - **响应**：
+    ```
+    {
+      "id": "task_id",
+      "state": "PENDING",
+      "result": ""
+    }
+    ```
+
+- **检测任务**：
+  - **请求**：
+    ```
+    GET /check/get_circle_area?result_id=task_id
+    Authorization: Basic <base64_encoded_username_password>
+    ```
+  - **响应**：
+    ```
+    {
+      "id": "task_id",
+      "state": "SUCCESS",
+      "result": {
+        "area": 78.53981633974483
+      }
+    }
+    ```
+
+- **同步调用任务**：
+  - **请求**：
+    ```
+    POST /run/get_circle_area
+    Content-Type: application/json
+    Authorization: Basic <base64_encoded_username_password>
+    {
+      "r": 5
+    }
+    ```
+  - **响应**：
+    ```
+    {
+      "id": "",
+      "state": "SUCCESS",
+      "result": {
+        "area": 78.53981633974483
+      }
+    }
+    ```
+
+### 权限控制
+- 使用 HTTP Basic 认证进行权限控制。
+- 用户名和密码存储在 `./files/user_to_passwd.json` 文件中。
+
+### 日志和调试
+- 日志信息在控制台输出。
+- 可以通过 `api_status_info` 接口查看任务状态信息。
 
