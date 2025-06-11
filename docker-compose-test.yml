@@ -9,7 +9,7 @@ services:
 
     ports:
       # 在single_node 与 distributed_master 需要映射api端口 
-      - "9001:80"
+      - "9001:443"
       # 在distributed_master需要映射任务队列端口
       - "9000:6379"
 

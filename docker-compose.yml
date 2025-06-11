@@ -2,19 +2,20 @@ version: "3.9"
 
 services:
   fasttask:
-    image: fasttask
+    image: fasttask:test
     container_name: fasttask
     command: sh run.sh
     restart: always
 
     ports:
       # 在single_node 与 distributed_master 需要映射api端口 
-      - "9001:80"
+      - "9001:443"
       # 在distributed_master需要映射任务队列端口
       # - "9000:6379"
 
     volumes:
       - ./files:/fasttask/files
+      # - ./fasttask:/fasttask
 
     environment:
       # 缓存快照间隔时间s
@@ -38,3 +39,17 @@ services:
       # 禁用的任务
       - disabled_tasks=get_hypotenuse
   
+      - result_expires=3600
+      - worker_pool=prefork
+      - worker_concurrency=4
+
+
+      # api设置
+      - api_docs=True
+      - api_redoc=True
+      - api_status_info=True
+      - api_run=True
+      - api_create=True
+      - api_check=True
+      - api_file_download=True
+      - api_file_upload=True
