@@ -57,15 +57,22 @@ if [ -z "$worker_concurrency" ]; then
     exit 1
 fi
 
+if [ -z "$uvicorn_workers" ]; then
+    uvicorn_workers=$(grep -c ^processor /proc/cpuinfo)
+fi
+
 cd /fasttask
 
 loaded_tasks=$(python load_tasks.py)
-echo ""
-echo ">>>>>>>>>>>>>>>>>>>      ..      <<<<<<<<<<<<<<<<<<<"
-echo ">>>>>>>>>>>>>>>>>>>     ....     <<<<<<<<<<<<<<<<<<<"
-echo ">>>>>>>>>>>>>>>>>>>   FastTask   <<<<<<<<<<<<<<<<<<<"
-echo ">>>>>>>>>>>>>>>>>>>  ..........  <<<<<<<<<<<<<<<<<<<"
-echo ">>>>>>>>>>>>>>>>>>> ............ <<<<<<<<<<<<<<<<<<<"
+echo "
+                                 /\\_/\\
+                                ( o.o )
+                                > ^ <   F A S T T A S K
+                             ///|||||\\\\\\
+                            ⚡⚡⚡⚡⚡⚡⚡⚡⚡⚡⚡
+                            >>  B O O T I N G  U P  <<
+                            ⚡⚡⚡⚡⚡⚡⚡⚡⚡⚡⚡
+"
 
 echo ""
 echo "---->> loaded_tasks=$loaded_tasks"
@@ -73,6 +80,7 @@ echo "---->> result_expires=$result_expires"
 echo "---->> node_type=$node_type"
 echo "---->> worker_pool=$worker_pool"
 echo "---->> worker_concurrency=$worker_concurrency"
+echo "---->> CPU_COUNT=$CPU_COUNT"
 
 if [ "$node_type" = "single_node" ]; then
 
@@ -85,13 +93,13 @@ if [ "$node_type" = "single_node" ]; then
 
     echo "---->> Starting Redis on $master_host:$task_queue_port..."
     nohup redis-server --bind "$master_host" --requirepass "$task_queue_passwd" --port "$task_queue_port" $rdb_snapshot_param >/var/log/redis.log 2>&1 &
-    nohup celery -A celery_app worker --queues "$loaded_tasks" --loglevel=info >/var/log/celery.log 2>&1 &
+    nohup celery -A celery_app worker --queues "$loaded_tasks" --loglevel=info --statedb=./files/celery_worker.state >/var/log/celery.log 2>&1 &
 
     # Generate SSL certificates if they don't exist
     generate_ssl_certs
 
     echo "---->> Starting Uvicorn with HTTPS..."
-    nohup uvicorn api:app --host 0.0.0.0 --port 443 --reload --ssl-keyfile "$SSL_KEYFILE" --ssl-certfile "$SSL_CERTFILE" >/var/log/uvicorn.log 2>&1 &
+    nohup uvicorn api:app --host 0.0.0.0 --port 443 --workers "$uvicorn_workers" --ssl-keyfile "$SSL_KEYFILE" --ssl-certfile "$SSL_CERTFILE" >/var/log/uvicorn.log 2>&1 &
 
     echo ""
     sleep 3
@@ -111,7 +119,7 @@ elif [ "$node_type" = "distributed_master" ]; then
     generate_ssl_certs
 
     echo "---->> Starting Uvicorn with HTTPS..."
-    nohup uvicorn api:app --host 0.0.0.0 --port 443 --reload --ssl-keyfile "$SSL_KEYFILE" --ssl-certfile "$SSL_CERTFILE" >/var/log/uvicorn.log 2>&1 &
+    nohup uvicorn api:app --host 0.0.0.0 --port 443 --workers "$uvicorn_workers" --ssl-keyfile "$SSL_KEYFILE" --ssl-certfile "$SSL_CERTFILE" >/var/log/uvicorn.log 2>&1 &
 
     echo ""
     sleep 3
@@ -119,7 +127,7 @@ elif [ "$node_type" = "distributed_master" ]; then
 
 elif [ "$node_type" = "distributed_worker" ]; then
     echo "---->> Starting celery workers..."
-    nohup celery -A celery_app worker --queues "$loaded_tasks" --loglevel=info >/var/log/celery.log 2>&1 &
+    nohup celery -A celery_app worker --queues "$loaded_tasks" --loglevel=info --statedb=./files/celery_worker.state >/var/log/celery.log 2>&1 &
 
     echo ""
     sleep 3
