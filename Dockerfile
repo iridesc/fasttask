@@ -7,7 +7,8 @@ RUN apt-get update && \
     apt-get install -y --no-install-recommends redis-server supervisor && \
     rm -rf /var/lib/apt/lists/*
 
+COPY fasttask/requirements.txt /
+RUN pip install --no-cache-dir -r requirements.txt
+
 COPY fasttask /fasttask
 WORKDIR /fasttask
-
-RUN pip install --no-cache-dir -r requirements.txt
