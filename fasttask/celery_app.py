@@ -3,19 +3,20 @@ from celery import Celery
 from kombu import Queue, Exchange
 from tools import load_task_names, get_int_env
 
-master_host = os.environ["master_host"]
-task_queue_port = os.environ["task_queue_port"]
-task_queue_passwd = os.environ["task_queue_passwd"]
-result_expires = get_int_env("result_expires", default=24 * 3600)
-worker_pool = os.environ["worker_pool"]
-worker_concurrency = get_int_env("worker_concurrency", default=4)
+MASTER_HOST = os.environ["MASTER_HOST"]
+TASK_QUEUE_PORT = os.environ["TASK_QUEUE_PORT"]
+TASK_QUEUE_PASSWD = os.environ["TASK_QUEUE_PASSWD"]
+
+
+
+CELERY_DIR = os.environ.get("CELERY_DIR")
 
 enabled_task_names = load_task_names("loaded_tasks")
 
 app = Celery(
     "fasttask",
-    broker=f"redis://:{task_queue_passwd}@{master_host}:{task_queue_port}/1",
-    backend=f"redis://:{task_queue_passwd}@{master_host}:{task_queue_port}/2",
+    broker=f"redis://:{TASK_QUEUE_PASSWD}@{MASTER_HOST}:{TASK_QUEUE_PORT}/1",
+    backend=f"redis://:{TASK_QUEUE_PASSWD}@{MASTER_HOST}:{TASK_QUEUE_PORT}/2",
     include=[f"loaded_tasks.{task_name}" for task_name in enabled_task_names],
     result_extended=True,
     task_track_started=True,
@@ -23,23 +24,25 @@ app = Celery(
 
 app.conf.update(
     {
-        "QUEUES": tuple(
+        "task_queues": tuple(
             Queue(task_name, Exchange("tasks_exchange"), routing_key=task_name)
             for task_name in enabled_task_names
         ),
-        "DEFAULT_EXCHANGE": "tasks_exchange",
-        "DEFAULT_EXCHANGE_TYPE": "direct",
-        "ROUTES": {
+        "task_default_exchange": "tasks_exchange",
+        "task_default_exchange_type": "direct",
+        "task_routes": {
             f"loaded_tasks.{task_name}._{task_name}": {
                 "queue": task_name,
                 "routing_key": task_name,
             }
             for task_name in enabled_task_names
         },
-        "result_expires": result_expires,
-        "worker_pool": worker_pool,
-        "worker_concurrency": worker_concurrency,
+        "result_expires": get_int_env("RESULT_EXPIRES", default=24 * 3600),
+        "worker_pool": os.environ["WORKER_POOL"],
+        "worker_concurrency": get_int_env("WORKER_CONCURRENCY", default=4),
         "broker_connection_retry_on_startup": True,
+        "worker_state_db": os.path.join(CELERY_DIR, "worker.state"),
+        "worker_loglevel": "INFO",
     }
 )
 

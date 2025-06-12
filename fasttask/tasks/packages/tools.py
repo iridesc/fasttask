@@ -10,9 +10,9 @@ from functools import wraps
 
 
 cache_db = redis.Redis(
-    host=os.environ["master_host"],
-    port=os.environ["task_queue_port"],
-    password=os.environ["task_queue_passwd"],
+    host=os.environ["MASTER_HOST"],
+    port=os.environ["TASK_QUEUE_PORT"],
+    password=os.environ["TASK_QUEUE_PASSWD"],
     db=0,
 )
 

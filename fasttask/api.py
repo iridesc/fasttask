@@ -96,9 +96,9 @@ def try_import_Data(task_model, DataName) -> type:
 
 def load_redis_task_infos() -> dict:
     r = redis.Redis(
-        host=os.environ["master_host"],
-        port=os.environ["task_queue_port"],
-        password=os.environ["task_queue_passwd"],
+        host=os.environ["MASTER_HOST"],
+        port=os.environ["TASK_QUEUE_PORT"],
+        password=os.environ["TASK_QUEUE_PASSWD"],
         db="1",
         decode_responses=True,
     )
@@ -111,9 +111,9 @@ def load_redis_task_infos() -> dict:
         }
 
     r = redis.Redis(
-        host=os.environ["master_host"],
-        port=os.environ["task_queue_port"],
-        password=os.environ["task_queue_passwd"],
+        host=os.environ["MASTER_HOST"],
+        port=os.environ["TASK_QUEUE_PORT"],
+        password=os.environ["TASK_QUEUE_PASSWD"],
         db="2",
         decode_responses=True,
     )
@@ -128,14 +128,12 @@ def load_redis_task_infos() -> dict:
 
 
 doc_url = None
-if get_bool_env("api_docs"):
+if get_bool_env("API_DOCS"):
     doc_url = "/docs"
-    print(f"-> api_docs enabled. {doc_url=}")
 
 redoc_url = None
-if get_bool_env("api_redoc"):
+if get_bool_env("API_REDOC"):
     redoc_url = "/redoc"
-    print(f"-> api_redoc enabled. {redoc_url=}")
 
 
 app = FastAPI(
@@ -148,7 +146,7 @@ app = FastAPI(
 )
 
 
-if get_bool_env("api_status_info"):
+if get_bool_env("API_STATUS_INFO"):
 
     @app.get("/status_info")
     def status_info(username: Annotated[str, Depends(get_current_username)]):
@@ -169,10 +167,9 @@ if get_bool_env("api_status_info"):
             "task_to_amount_status_statics": task_to_statistics_info,
         }
 
-    print("-> api_status_info enabled.")
 
 
-if get_bool_env("api_file_download"):
+if get_bool_env("API_FILE_DOWNLOAD"):
 
     @app.get("/download")
     def download(file_name, username: Annotated[str, Depends(get_current_username)]):
@@ -183,10 +180,9 @@ if get_bool_env("api_file_download"):
         print(f"{username=}: 下载: {display_filename=} {validated_file_path=}")
         return FileResponse(validated_file_path, filename=display_filename)
 
-    print("-> api_file_download enabled.")
 
 
-if get_bool_env("api_file_upload"):
+if get_bool_env("API_FILE_UPLOAD"):
 
     @app.post("/upload")
     def upload(
@@ -204,10 +200,9 @@ if get_bool_env("api_file_upload"):
 
         return {"file_name": file_name}
 
-    print("-> api_file_download enabled")
 
 
-if get_bool_env("api_revoke"):
+if get_bool_env("API_REVOKE"):
 
     @app.post(f"/revoke", response_model=ActionResp)
     def revoke(result_id: str, username: Annotated[str, Depends(get_current_username)]):
@@ -244,7 +239,6 @@ if get_bool_env("api_revoke"):
         resp.status = ActionStatus.success.value
         return resp
 
-    print("-> api_revoke enabled.")
 
 
 def get_task_apis(task_name):
@@ -261,7 +255,7 @@ def get_task_apis(task_name):
         state: TaskState = TaskState.failure.value
         result: Union[Result, str]
 
-    if get_bool_env("api_run"):
+    if get_bool_env("API_RUN"):
 
         @app.post(f"/run/{task_name}", response_model=ResultInfo)
         def run(
@@ -276,9 +270,8 @@ def get_task_apis(task_name):
 
             return ResultInfo(result=result, state=state)
 
-        print(f"-> api_run: {task_name=} enabled.")
 
-    if get_bool_env("api_create"):
+    if get_bool_env("API_CREATE"):
 
         @app.post(f"/create/{task_name}", response_model=ResultInfo)
         def create(
@@ -300,7 +293,6 @@ def get_task_apis(task_name):
 
             return result_info
 
-        print(f"-> api_create: {task_name=} enabled.")
 
     if get_bool_env("api_check"):
 
@@ -325,7 +317,6 @@ def get_task_apis(task_name):
 
             return ResultInfo(id=result_id, state=async_result.state, result=result)
 
-        print(f"-> api_check: {task_name=} enabled.")
 
 
 for task_name in load_task_names("tasks"):

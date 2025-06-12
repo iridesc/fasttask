@@ -18,17 +18,17 @@ def get_list_env(name):
 
 def load_task_names(folder_path, use_filter=True):
     if use_filter:
-        enabled_tasks = get_list_env("enabled_tasks")
-        disabled_tasks = get_list_env("disabled_tasks")
+        ENABLED_TASKS = get_list_env("ENABLED_TASKS")
+        DISABLED_TASKS = get_list_env("DISABLED_TASKS")
 
     task_names = set()
     for task_name in [
         py_file[:-3] for py_file in os.listdir(folder_path) if py_file.endswith(".py")
     ]:
         if use_filter:
-            if enabled_tasks and task_name not in enabled_tasks:
+            if ENABLED_TASKS and task_name not in ENABLED_TASKS:
                 continue
-            if disabled_tasks and task_name in disabled_tasks:
+            if DISABLED_TASKS and task_name in DISABLED_TASKS:
                 continue
         task_names.add(task_name)
     return task_names
