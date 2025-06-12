@@ -10,6 +10,8 @@ export SSL_KEYFILE=$SSL_CERT_DIR/key.pem
 export SSL_CERTFILE=$SSL_CERT_DIR/cert.pem
 export REDIS_DIR=$FASTTASK_FILES_DIR/redis
 export CELERY_DIR=$FASTTASK_FILES_DIR/celery
+export TASK_QUEUE_PORT=6379
+
 
 export LOADED_TASKS=$(python load_tasks.py)
 if [ -z "$UVICORN_WORKERS" ]; then
@@ -82,7 +84,6 @@ echo "---->> UVICORN_WORKERS=$UVICORN_WORKERS"
 
 if [ "$NODE_TYPE" = "single_node" ]; then
     export MASTER_HOST=127.0.0.1
-    export TASK_QUEUE_PORT=6379
     export TASK_QUEUE_PASSWD=passwd
     generate_ssl_certs
     echo "---->> Starting supervisord with single_node configuration..."
