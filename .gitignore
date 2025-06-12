@@ -2,4 +2,10 @@ env/*
 .venv
 .vscode/*
 *.pyc
+
 files
+files-master
+files-worker
+files-worker_1
+files-worker_2
+
