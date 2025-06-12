@@ -30,18 +30,18 @@ services:
 
       # # distributed_master: 分布式部署部署的主节点 提供api与任务队列后端
       # - node_type=distributed_master
-      # - task_queue_passwd=passwd
+      # - TASK_QUEUE_PASSWD=passwd
 
       # # distributed_worker: 分布式部署部署的从节点 负责cerery任务执行环境,需要配置distributed_master的主机地址, 任务队列端口与密码
       # - node_type=distributed_worker
       # - master_host=0.0.0.0
-      # - task_queue_port=9000
-      # - task_queue_passwd=passwd
+      # - TASK_QUEUE_PORT=9000
+      # - TASK_QUEUE_PASSWD=passwd
       
       # 启用的任务
-      # - enabled_tasks=task1,task2,task3
+      # - ENABLED_TASKS=task1,task2,task3
       # 禁用的任务
-      # - disabled_tasks=task1,task2,task3
+      # - DISABLED_TASKS=task1,task2,task3
       
       # webtop  related
       - PUID=1000

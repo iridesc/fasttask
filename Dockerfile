@@ -1,10 +1,13 @@
 FROM irid/py3
 
 ENV PYTHONDONTWRITEBYTECODE=1
-RUN apt update && apt install -y redis-server
+ENV PYTHONUNBUFFERED=1
 
-COPY /fasttask/req.txt /fasttask/req.txt
-RUN pip install -r /fasttask/req.txt
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends redis-server supervisor && \
+    rm -rf /var/lib/apt/lists/*
 
 COPY fasttask /fasttask
 WORKDIR /fasttask
+
+RUN pip install --no-cache-dir -r requirements.txt

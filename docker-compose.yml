@@ -4,53 +4,53 @@ services:
   fasttask:
     image: fasttask:test
     container_name: fasttask
-    command: sh run.sh
+    command: sh r1.sh
     restart: always
 
     ports:
       # 在single_node 与 distributed_master 需要映射api端口 
       - "9001:443"
-      # 在distributed_master需要映射任务队列端口
-      # - "9000:6379"
+    # 在distributed_master需要映射任务队列端口
+    # - "9000:6379"
 
     volumes:
       - ./files:/fasttask/files
-      # - ./fasttask:/fasttask
+      - ./fasttask:/fasttask
 
     environment:
       # 缓存快照间隔时间s
-      - rdb_snapshot_gap=600
+      - RDB_SNAPSHOT_GAP=600
 
       # single_node: 单一节点提供接口+执行任务
-      - node_type=single_node
+      - NODE_TYPE=single_node
 
       # # distributed_master: 分布式部署部署的主节点 提供api与任务队列后端
-      # - node_type=distributed_master
-      # - task_queue_passwd=passwd
+      # - NODE_TYPE=distributed_master
+      # - TASK_QUEUE_PASSWD=passwd
 
       # # distributed_worker: 分布式部署部署的从节点 负责cerery任务执行环境,需要配置distributed_master的主机地址, 任务队列端口与密码
-      # - node_type=distributed_worker
-      # - master_host=0.0.0.0
-      # - task_queue_port=9000
-      # - task_queue_passwd=passwd
+      # - NODE_TYPE=distributed_worker
+      # - MASTER_HOST=0.0.0.0
+      # - TASK_QUEUE_PORT=9000
+      # - TASK_QUEUE_PASSWD=passwd
 
       # 启用的任务
-      - enabled_tasks=get_circle_area
+      - ENABLED_TASKS=get_circle_area
       # 禁用的任务
-      - disabled_tasks=get_hypotenuse
+      - DISABLED_TASKS=get_hypotenuse
   
-      - result_expires=3600
-      - worker_pool=prefork
-      - worker_concurrency=4
+      - RESULT_EXPIRES=3600
+      - WORKER_POOL=prefork
+      - WORKER_CONCURRENCY=4
 
 
       # api设置
-      - api_docs=True
-      - api_redoc=True
-      - api_status_info=True
-      - api_run=True
-      - api_create=True
-      - api_check=True
-      - api_revoke=True
-      - api_file_download=True
-      - api_file_upload=True
+      - API_DOCS=True
+      - API_REDOC=False
+      - API_STATUS_INFO=True
+      - API_RUN=True
+      - API_CREATE=True
+      - API_CHECK=True
+      - API_REVOKE=True
+      - API_FILE_DOWNLOAD=True
+      - API_FILE_UPLOAD=True

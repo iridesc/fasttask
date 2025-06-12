@@ -13,17 +13,17 @@
 
 
 ### 环境变量配置
-- `master_host`：Redis 主机地址。
-- `task_queue_port`：Redis 端口。
+- `MASTER_HOST`：Redis 主机地址。
+- `TASK_QUEUE_PORT`：Redis 端口。
 - `task_queue_passwd`：Redis 密码。
-- `api_docs`：是否启用 API 文档。
-- `api_redoc`：是否启用 ReDoc 文档。
-- `api_status_info`：是否启用状态信息接口。
-- `api_file_download`：是否启用文件下载接口。
-- `api_file_upload`：是否启用文件上传接口。
-- `api_revoke`：是否启用撤销任务接口。
-- `api_run`：是否启用同步调用任务接口。
-- `api_create`：是否启用创建任务接口。
+- `API_DOCS`：是否启用 API 文档。
+- `API_REDOC`：是否启用 ReDoc 文档。
+- `API_STATUS_INFO`：是否启用状态信息接口。
+- `API_FILE_DOWNLOAD`：是否启用文件下载接口。
+- `API_FILE_UPLOAD`：是否启用文件上传接口。
+- `API_REVOKE`：是否启用撤销任务接口。
+- `API_RUN`：是否启用同步调用任务接口。
+- `API_CREATE`：是否启用创建任务接口。
 - `api_check`：是否启用检测任务接口。
 
 ### 运行和测试
@@ -124,5 +124,5 @@
 
 ### 日志和调试
 - 日志信息在控制台输出。
-- 可以通过 `api_status_info` 接口查看任务状态信息。
+- 可以通过 `API_STATUS_INFO` 接口查看任务状态信息。
 
