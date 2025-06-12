@@ -1,6 +1,0 @@
-fastapi
-uvicorn[standard]
-celery
-redis
-gevent
-python-multipart
