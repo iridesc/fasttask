@@ -18,30 +18,17 @@ from fastapi import Depends, FastAPI, HTTPException, status, UploadFile
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 
 from celery_app import app as celery_app
-from tools import get_bool_env, load_task_names
+from tools import (
+    check_file_name,
+    get_bool_env,
+    get_safe_file_name,
+    load_task_names,
+)
 from setting import project_title, project_description, project_summary, project_version
 
-
+CONF_DIR = os.environ.get("CONF_DIR")
 sys.path.append("tasks")
-
 running_id = str(uuid.uuid4())
-
-
-doc_url = "/docs" if get_bool_env("api_docs") else None
-redoc_url = "/redoc" if get_bool_env("api_redoc") else None
-
-print(f"-> api_docs enabled. {doc_url=}")
-print(f"-> api_redoc enabled. {redoc_url=}")
-
-app = FastAPI(
-    title=project_title,
-    description=project_description,
-    summary=project_summary,
-    version=project_version,
-    docs_url=doc_url,
-    redoc_url=redoc_url,
-)
-security = HTTPBasic()
 
 
 class TaskState(Enum):
@@ -69,14 +56,15 @@ class DownloadFileInfo(BaseModel):
 
 
 def load_user_to_passwd() -> dict:
-    if not os.path.exists("./files/user_to_passwd.json"):
+    auth_file = f"{CONF_DIR}/user_to_passwd.json"
+    if not os.path.exists(auth_file):
         return dict()
-    with open("./files/user_to_passwd.json", "r") as f:
+    with open(auth_file, "r") as f:
         return json.load(f)
 
 
 def get_current_username(
-    credentials: Annotated[HTTPBasicCredentials, Depends(security)],
+    credentials: Annotated[HTTPBasicCredentials, Depends(HTTPBasic())],
 ):
     user_to_passwd = load_user_to_passwd()
     if not user_to_passwd:
@@ -139,6 +127,27 @@ def load_redis_task_infos() -> dict:
     return task_id_to_infos
 
 
+doc_url = None
+if get_bool_env("api_docs"):
+    doc_url = "/docs"
+    print(f"-> api_docs enabled. {doc_url=}")
+
+redoc_url = None
+if get_bool_env("api_redoc"):
+    redoc_url = "/redoc"
+    print(f"-> api_redoc enabled. {redoc_url=}")
+
+
+app = FastAPI(
+    title=project_title,
+    description=project_description,
+    summary=project_summary,
+    version=project_version,
+    docs_url=doc_url,
+    redoc_url=redoc_url,
+)
+
+
 if get_bool_env("api_status_info"):
 
     @app.get("/status_info")
@@ -167,13 +176,12 @@ if get_bool_env("api_file_download"):
 
     @app.get("/download")
     def download(file_name, username: Annotated[str, Depends(get_current_username)]):
-        if ".." in file_name:
-            raise Exception(f"{username=}: .. is not allowed in path")
-        file_path = os.path.join("./files/", file_name)
-        file_path = os.path.abspath(file_path)
-        filename = os.path.basename(file_path)
-        print(f"{username=}: download: {filename=} {file_path=}:")
-        return FileResponse(file_path, filename=filename)
+        validated_file_path = check_file_name(file_name, username)
+        if not os.path.isfile(validated_file_path):
+            return HTTPException(status_code=404, detail="File not found")
+        display_filename = os.path.basename(validated_file_path)
+        print(f"{username=}: 下载: {display_filename=} {validated_file_path=}")
+        return FileResponse(validated_file_path, filename=display_filename)
 
     print("-> api_file_download enabled.")
 
@@ -184,15 +192,17 @@ if get_bool_env("api_file_upload"):
     def upload(
         file: UploadFile, username: Annotated[str, Depends(get_current_username)]
     ):
-        if ".." in file.filename:
-            raise Exception(f"{username=}: .. is not allowed in {file.filename=}")
-
-        filename = f"upload_{uuid.uuid4()}_{file.filename}"
-        with open(os.path.join("./files/", filename), "wb") as f:
+        file_name = get_safe_file_name(file.filename, username)
+        with open(
+            os.path.join(
+                "./files/",
+            ),
+            "wb",
+        ) as f:
             for i in iter(lambda: file.file.read(1024 * 1024 * 10), b""):
                 f.write(i)
 
-        return {"file_name": filename}
+        return {"file_name": file_name}
 
     print("-> api_file_download enabled")
 
