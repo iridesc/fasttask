@@ -25,10 +25,3 @@ def load_tasks(from_folder, to_folder):
             f.write(task_file_content.replace("task_name", task_name))
         loaded_tasks.append(task_name)
     return loaded_tasks
-
-
-if __name__ == "__main__":
-    print(','.join(load_tasks(
-        from_folder="tasks",
-        to_folder="loaded_tasks"
-    )))

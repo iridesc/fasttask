@@ -26,9 +26,9 @@ from tools import (
 )
 from setting import project_title, project_description, project_summary, project_version
 
-CONF_DIR = os.environ.get("CONF_DIR")
+CONF_DIR = os.environ["CONF_DIR"]
 sys.path.append("tasks")
-running_id = str(uuid.uuid4())
+running_id = os.environ["RUNNING_ID"]
 
 
 class TaskState(Enum):
@@ -168,7 +168,6 @@ if get_bool_env("API_STATUS_INFO"):
         }
 
 
-
 if get_bool_env("API_FILE_DOWNLOAD"):
 
     @app.get("/download")
@@ -179,7 +178,6 @@ if get_bool_env("API_FILE_DOWNLOAD"):
         display_filename = os.path.basename(validated_file_path)
         print(f"{username=}: 下载: {display_filename=} {validated_file_path=}")
         return FileResponse(validated_file_path, filename=display_filename)
-
 
 
 if get_bool_env("API_FILE_UPLOAD"):
@@ -199,7 +197,6 @@ if get_bool_env("API_FILE_UPLOAD"):
                 f.write(i)
 
         return {"file_name": file_name}
-
 
 
 if get_bool_env("API_REVOKE"):
@@ -240,7 +237,6 @@ if get_bool_env("API_REVOKE"):
         return resp
 
 
-
 def get_task_apis(task_name):
     task = getattr(
         import_module(package="loaded_tasks", name=f".{task_name}"), f"_{task_name}"
@@ -270,7 +266,6 @@ def get_task_apis(task_name):
 
             return ResultInfo(result=result, state=state)
 
-
     if get_bool_env("API_CREATE"):
 
         @app.post(f"/create/{task_name}", response_model=ResultInfo)
@@ -293,8 +288,7 @@ def get_task_apis(task_name):
 
             return result_info
 
-
-    if get_bool_env("api_check"):
+    if get_bool_env("API_CHECK"):
 
         @app.get(f"/check/{task_name}", response_model=ResultInfo)
         def check(
@@ -316,7 +310,6 @@ def get_task_apis(task_name):
                 result = str(async_result.result)
 
             return ResultInfo(id=result_id, state=async_result.state, result=result)
-
 
 
 for task_name in load_task_names("tasks"):
