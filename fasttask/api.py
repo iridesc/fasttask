@@ -190,6 +190,7 @@ if get_bool_env("API_FILE_UPLOAD"):
         with open(
             os.path.join(
                 "./files/",
+                file_name,
             ),
             "wb",
         ) as f:
