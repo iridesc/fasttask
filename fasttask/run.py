@@ -166,6 +166,8 @@ env_type_to_envs = {
             init_func=init_dir,
             is_print_env=False,
         ),
+        Env("WORKER_POOL", "prefork"),
+        Env("WORKER_CONCURRENCY", os.cpu_count()),
     ],
     "single_node": [
         # com default
@@ -183,9 +185,6 @@ env_type_to_envs = {
         Env("API_REVOKE", "True"),
         Env("API_FILE_DOWNLOAD", "True"),
         Env("API_FILE_UPLOAD", "True"),
-        # worker default
-        Env("WORKER_POOL", "prefork"),
-        Env("WORKER_CONCURRENCY", os.cpu_count()),
         Env("RESULT_EXPIRES", f"{24 * 60 * 60}"),
     ],
     "distributed_master": [
@@ -206,8 +205,6 @@ env_type_to_envs = {
         Env("MASTER_HOST"),
         Env("TASK_QUEUE_PORT"),
         Env("TASK_QUEUE_PASSWD"),
-        Env("WORKER_POOL", "prefork"),
-        Env("WORKER_CONCURRENCY", os.cpu_count()),
         Env("RESULT_EXPIRES", f"{24 * 60 * 60}"),
     ],
 }
