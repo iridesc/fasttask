@@ -160,13 +160,6 @@ env_type_to_envs = {
             is_print_env=False,
         ),
         Env(
-            "REDIS_DIR",
-            "/fasttask/files/fasttask/redis",
-            force_default=True,
-            init_func=init_dir,
-            is_print_env=False,
-        ),
-        Env(
             "CELERY_DIR",
             "/fasttask/files/fasttask/celery",
             force_default=True,
@@ -180,7 +173,6 @@ env_type_to_envs = {
         Env("TASK_QUEUE_PORT", "6379", force_default=True),
         Env("TASK_QUEUE_PASSWD", "passwd", force_default=True),
         # master default
-        Env("RDB_SNAPSHOT_GAP", 60),
         Env("UVICORN_WORKERS", os.cpu_count()),
         Env("API_DOCS", "True"),
         Env("API_REDOC", "True"),
@@ -200,7 +192,6 @@ env_type_to_envs = {
         Env("MASTER_HOST", "0.0.0.0", force_default=True),
         Env("TASK_QUEUE_PORT", "6379", force_default=True),
         Env("TASK_QUEUE_PASSWD"),
-        Env("RDB_SNAPSHOT_GAP", 60),
         Env("UVICORN_WORKERS", os.cpu_count()),
         Env("API_REDOC", "True"),
         Env("API_STATUS_INFO", "True"),
