@@ -17,8 +17,6 @@ services:
       - ./files-master:/fasttask/files
 
     environment:
-      # 缓存快照间隔时间s
-      - RDB_SNAPSHOT_GAP=600
 
       # # distributed_master: 分布式部署部署的主节点 提供api与任务队列后端
       - NODE_TYPE=distributed_master
@@ -53,7 +51,7 @@ services:
 
       # distributed_worker: 分布式部署部署的从节点 负责cerery任务执行环境,需要配置distributed_master的主机地址, 任务队列端口与密码
       - NODE_TYPE=distributed_worker
-      - MASTER_HOST=0.0.0.0
+      - MASTER_HOST=10.65.8.8
       - TASK_QUEUE_PORT=9000
       - TASK_QUEUE_PASSWD=passwd
 
@@ -80,7 +78,7 @@ services:
 
       # distributed_worker: 分布式部署部署的从节点 负责cerery任务执行环境,需要配置distributed_master的主机地址, 任务队列端口与密码
       - NODE_TYPE=distributed_worker
-      - MASTER_HOST=0.0.0.0
+      - MASTER_HOST=10.65.8.8
       - TASK_QUEUE_PORT=9000
       - TASK_QUEUE_PASSWD=passwd
 

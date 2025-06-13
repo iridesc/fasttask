@@ -1,0 +1,17 @@
+services:
+  fasttask:
+    image: fasttask:test
+    container_name: fasttask
+    command: ["python", "run.py"]
+    restart: always
+
+    ports:
+      # 映射api端口 
+      - "9001:443"
+        
+    volumes:
+      - ./files:/fasttask/files
+
+    environment:
+      # single_node: 单一节点提供接口+执行任务
+      - NODE_TYPE=single_node
