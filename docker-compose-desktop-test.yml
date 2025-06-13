@@ -22,8 +22,7 @@ services:
       - ./fasttask-desktop-master-files:/fasttask/files
 
     environment:
-      # 缓存快照间隔时间s
-      - rdb_snapshot_gap=600
+
 
       # # distributed_master: 分布式部署部署的主节点 提供api与任务队列后端
       - node_type=distributed_master

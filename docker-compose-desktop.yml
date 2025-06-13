@@ -22,9 +22,6 @@ services:
       - ./files:/fasttask/files
 
     environment:
-      # 缓存快照间隔时间s
-      - rdb_snapshot_gap=600
-
       # single_node: 单一节点提供接口+执行任务
       - node_type=single_node
 
