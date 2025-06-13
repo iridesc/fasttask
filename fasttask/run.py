@@ -192,6 +192,7 @@ env_type_to_envs = {
         Env("TASK_QUEUE_PORT", "6379", force_default=True),
         Env("TASK_QUEUE_PASSWD"),
         Env("UVICORN_WORKERS", os.cpu_count()),
+        Env("API_DOCS", "True"),
         Env("API_REDOC", "True"),
         Env("API_STATUS_INFO", "True"),
         Env("API_RUN", "True"),
@@ -229,17 +230,21 @@ def main():
         for env in env_type_to_envs["single_node"]:
             env.init_env()
         generate_ssl_certs()
+        show_banner()
         start()
     elif os.environ["NODE_TYPE"] == "distributed_master":
         for env in env_type_to_envs["distributed_master"]:
             env.init_env()
         generate_ssl_certs()
+        show_banner()
         start()
     elif os.environ["NODE_TYPE"] == "distributed_worker":
         for env in env_type_to_envs["worker"]:
             env.init_env()
+        show_banner()
         start()
     else:
+        show_banner()
         raise Exception(f"{os.environ['NODE_TYPE']} is not supported")
 
 

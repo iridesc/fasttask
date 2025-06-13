@@ -3,9 +3,8 @@ env/*
 .vscode/*
 *.pyc
 
-files
-files-master
-files-worker
-files-worker_1
-files-worker_2
-
+samples/files/*
+samples/files-master/
+samples/files-master/
+samples/files-worker_1/
+samples/files-worker_2/
