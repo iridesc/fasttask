@@ -7,10 +7,6 @@ MASTER_HOST = os.environ["MASTER_HOST"]
 TASK_QUEUE_PORT = os.environ["TASK_QUEUE_PORT"]
 TASK_QUEUE_PASSWD = os.environ["TASK_QUEUE_PASSWD"]
 
-
-
-CELERY_DIR = os.environ.get("CELERY_DIR")
-
 enabled_task_names = load_task_names("loaded_tasks")
 
 app = Celery(
@@ -41,8 +37,14 @@ app.conf.update(
         "worker_pool": os.environ["WORKER_POOL"],
         "worker_concurrency": get_int_env("WORKER_CONCURRENCY", default=4),
         "broker_connection_retry_on_startup": True,
-        "worker_state_db": os.path.join(CELERY_DIR, "worker.state"),
+        "worker_state_db": os.path.join(os.environ["CELERY_DIR"], "worker.state"),
         "worker_loglevel": "INFO",
+        "task_acks_late": True,
+        "worker_prefetch_multiplier": 1,
+        "task_reject_on_worker_lost": True,
+        "broker_transport_options": {
+            "visibility_timeout": int(os.environ["VISIBILITY_TIMEOUT"])
+        },
     }
 )
 

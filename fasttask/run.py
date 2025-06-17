@@ -23,16 +23,21 @@ class Env:
         self.init_func = init_func
         self.is_print_env = is_print_env
 
+    def get_default_value(self):
+        return (
+            self.default_value() if callable(self.default_value) else self.default_value
+        )
+
     def init_env(self):
         value = os.environ.get(self.key)
-        if not self.default_value and value is None:
+        if not self.get_default_value() and value is None:
             raise Exception(f"env {self.key} is required")
 
         if value is None:
-            os.environ[self.key] = str(self.default_value)
+            os.environ[self.key] = str(self.get_default_value())
             self.print_env("use default env.")
         elif self.force_default:
-            os.environ[self.key] = str(self.default_value)
+            os.environ[self.key] = str(self.get_default_value())
             self.print_env("set default env.")
         else:
             self.print_env("use customer env.")
@@ -104,9 +109,18 @@ env_type_to_envs = {
     "common": [
         Env("RUNNING_ID", str(uuid.uuid4()), force_default=True),
         Env("NODE_TYPE"),
+        Env("SOFT_TIME_LIMIT", default_value=30 * 60),
+        Env(
+            "TIME_LIMIT",
+            default_value=lambda: int(os.environ.get("SOFT_TIME_LIMIT")) + 60,
+        ),
+        Env(
+            "VISIBILITY_TIMEOUT",
+            default_value=lambda: int(os.environ.get("TIME_LIMIT")) + 60,
+        ),
         Env(
             "LOADED_TASKS",
-            default_value=",".join(
+            default_value=lambda: ",".join(
                 load_tasks(from_folder="tasks", to_folder="loaded_tasks")
             ),
             force_default=True,
@@ -222,6 +236,18 @@ def start():
     )
 
 
+def check_envs():
+    SOFT_TIME_LIMIT = int(os.environ.get("SOFT_TIME_LIMIT"))
+    TIME_LIMIT = int(os.environ.get("TIME_LIMIT"))
+    VISIBILITY_TIMEOUT = int(os.environ.get("VISIBILITY_TIMEOUT"))
+
+    if SOFT_TIME_LIMIT >= TIME_LIMIT:
+        raise Exception("TIME_LIMIT must be greater than SOFT_TIME_LIMIT")
+
+    if TIME_LIMIT >= VISIBILITY_TIMEOUT:
+        raise Exception("VISIBILITY_TIMEOUT must be greater than TIME_LIMIT")
+
+
 def main():
     for env in env_type_to_envs["common"]:
         env.init_env()
@@ -229,18 +255,23 @@ def main():
     if os.environ["NODE_TYPE"] == "single_node":
         for env in env_type_to_envs["single_node"]:
             env.init_env()
+        check_envs()
+
         generate_ssl_certs()
         show_banner()
         start()
     elif os.environ["NODE_TYPE"] == "distributed_master":
         for env in env_type_to_envs["distributed_master"]:
             env.init_env()
+        check_envs()
         generate_ssl_certs()
         show_banner()
         start()
     elif os.environ["NODE_TYPE"] == "distributed_worker":
         for env in env_type_to_envs["worker"]:
             env.init_env()
+        check_envs()
+
         show_banner()
         start()
     else:
