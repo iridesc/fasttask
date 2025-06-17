@@ -13,7 +13,7 @@ class Result(BaseModel):
     area: Union[float, int]
 
 
-@cache_result(ttl=60 * 10)
+# @cache_result(ttl=60 * 10)
 def get_circle_area(r):
     if r <= 0:
         raise ValueError("r must > 0")
