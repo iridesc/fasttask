@@ -1,5 +1,3 @@
-version: "3.9"
-
 services:
   fasttask-desktop-master:
     image: fasttask:desktop-test
