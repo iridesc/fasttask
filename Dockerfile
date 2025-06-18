@@ -12,3 +12,4 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY fasttask /fasttask
 WORKDIR /fasttask
+CMD ["python", "run.py"]

@@ -2,7 +2,6 @@ services:
   master:
     image: fasttask:test
     container_name: fasttask-master
-    command: ["python", "run.py"]
     restart: always
 
     ports:
@@ -19,7 +18,6 @@ services:
   worker-get_circle_area:
     image: fasttask:test
     container_name: fasttask-worker-get_circle_area
-    command: ["python", "run.py"]
     restart: always
 
     volumes:
@@ -34,7 +32,6 @@ services:
   worker-get_hypotenuse:
     image: fasttask:test
     container_name: fasttask-worker-get_hypotenuse
-    command: ["python", "run.py"]
     restart: always
 
     volumes:
