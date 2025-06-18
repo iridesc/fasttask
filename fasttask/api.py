@@ -72,18 +72,22 @@ class TaskState(Enum):
 
 
 class ActionStatus(Enum):
-    success = "success"
-    failure = "failure"
+    success = "SUCCESS"
+    failure = "FAILURE"
 
 
 class ActionResp(BaseModel):
-    status: TaskState = ActionStatus.failure
+    status: ActionStatus = ActionStatus.failure
     result: Any = ""
     message: str = ""
 
 
 class DownloadFileInfo(BaseModel):
     file_name: str = "lp.jpg"
+
+ 
+class ResultIDParams(BaseModel):
+    result_id: str
 
 
 def load_user_to_passwd() -> dict:
@@ -221,8 +225,9 @@ if get_bool_env("API_FILE_UPLOAD"):
 if get_bool_env("API_REVOKE"):
 
     @app.post(f"/revoke", response_model=ActionResp)
-    def revoke(result_id: str, username: Annotated[str, Depends(get_current_username)]):
+    def revoke(result_id_params: ResultIDParams, username: Annotated[str, Depends(get_current_username)]):
         resp = ActionResp()
+        result_id = result_id_params.result_id
         if not result_id.startswith(RUNNING_ID):
             resp.message = "invalid task id"
             return resp
@@ -252,7 +257,7 @@ if get_bool_env("API_REVOKE"):
                 resp.message = f"waiting for {result_id=} to be revoked timeout"
                 return resp
 
-        resp.status = ActionStatus.success.value
+        resp.status = ActionStatus.success
         return resp
 
 
