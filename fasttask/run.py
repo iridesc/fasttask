@@ -108,7 +108,7 @@ def show_banner():
 env_type_to_envs = {
     "common": [
         Env("NODE_TYPE"),
-        Env("SOFT_TIME_LIMIT", default_value=30 * 60),
+        Env("SOFT_TIME_LIMIT", default_value=24 * 60 * 60),
         Env(
             "TIME_LIMIT",
             default_value=lambda: int(os.environ.get("SOFT_TIME_LIMIT")) + 60,
@@ -117,6 +117,7 @@ env_type_to_envs = {
             "VISIBILITY_TIMEOUT",
             default_value=lambda: int(os.environ.get("TIME_LIMIT")) + 60,
         ),
+        Env("RESULT_EXPIRES", f"{3 * 24 * 60 * 60}"),
         Env(
             "LOADED_TASKS",
             default_value=lambda: ",".join(
@@ -205,7 +206,6 @@ env_type_to_envs = {
         Env("API_REVOKE", "True"),
         Env("API_FILE_DOWNLOAD", "True"),
         Env("API_FILE_UPLOAD", "True"),
-        Env("RESULT_EXPIRES", f"{24 * 60 * 60}"),
     ],
     "distributed_master": [
         Env("MASTER_HOST", "0.0.0.0", force_default=True),
@@ -222,11 +222,10 @@ env_type_to_envs = {
         Env("API_FILE_DOWNLOAD", "True"),
         Env("API_FILE_UPLOAD", "True"),
     ],
-    "worker": [
+    "distributed_worker": [
         Env("MASTER_HOST"),
         Env("TASK_QUEUE_PORT"),
         Env("TASK_QUEUE_PASSWD"),
-        Env("RESULT_EXPIRES", f"{24 * 60 * 60}"),
     ],
 }
 
@@ -274,7 +273,7 @@ def main():
         show_banner()
         start()
     elif os.environ["NODE_TYPE"] == "distributed_worker":
-        for env in env_type_to_envs["worker"]:
+        for env in env_type_to_envs["distributed_worker"]:
             env.init_env()
         check_envs()
 

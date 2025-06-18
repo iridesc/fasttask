@@ -8,10 +8,6 @@ def get_bool_env(name):
     return os.environ.get(name, "False") == "True"
 
 
-def get_int_env(name, default=0):
-    return int(os.environ.get(name, default))
-
-
 def get_list_env(name):
     return [s.strip() for s in os.environ.get(name, "").split(",") if s.strip()]
 

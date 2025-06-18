@@ -45,3 +45,4 @@ def xx(x):
 def sleep_random():
     for _ in range(10):
         time.sleep(random() * 5)
+        print("...")

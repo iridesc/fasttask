@@ -1,7 +1,7 @@
 import os
 from celery import Celery
 from kombu import Queue, Exchange
-from tools import load_task_names, get_int_env
+from tools import load_task_names
 
 MASTER_HOST = os.environ["MASTER_HOST"]
 TASK_QUEUE_PORT = os.environ["TASK_QUEUE_PORT"]
@@ -33,10 +33,11 @@ app.conf.update(
             }
             for task_name in enabled_task_names
         },
-        "result_expires": get_int_env("RESULT_EXPIRES", default=24 * 3600),
+        "result_expires": int(os.environ["RESULT_EXPIRES"]),
         "worker_pool": os.environ["WORKER_POOL"],
-        "worker_concurrency": get_int_env("WORKER_CONCURRENCY", default=4),
+        "worker_concurrency": int(os.environ["WORKER_CONCURRENCY"]),
         "broker_connection_retry_on_startup": True,
+        "broker_connection_max_retries": None,
         "worker_state_db": os.path.join(os.environ["CELERY_DIR"], "worker.state"),
         "worker_loglevel": "INFO",
         "task_acks_late": True,
