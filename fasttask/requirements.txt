@@ -4,3 +4,4 @@ celery
 redis
 gevent
 python-multipart
+retry

@@ -107,7 +107,6 @@ def show_banner():
 
 env_type_to_envs = {
     "common": [
-        Env("RUNNING_ID", str(uuid.uuid4()), force_default=True),
         Env("NODE_TYPE"),
         Env("SOFT_TIME_LIMIT", default_value=30 * 60),
         Env(
@@ -157,6 +156,13 @@ env_type_to_envs = {
         Env(
             "SSL_CERT_DIR",
             "/fasttask/files/fasttask/ssl_cert",
+            force_default=True,
+            init_func=init_dir,
+            is_print_env=False,
+        ),
+        Env(
+            "REDIS_DIR",
+            "/fasttask/files/fasttask/redis",
             force_default=True,
             init_func=init_dir,
             is_print_env=False,

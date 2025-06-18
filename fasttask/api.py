@@ -12,6 +12,7 @@ import redis
 from enum import Enum
 from typing import Any, Union, Annotated
 from importlib import import_module
+from retry import retry
 from pydantic import BaseModel
 from starlette.responses import FileResponse
 from fastapi import Depends, FastAPI, HTTPException, status, UploadFile
@@ -26,9 +27,39 @@ from tools import (
 )
 from setting import project_title, project_description, project_summary, project_version
 
-CONF_DIR = os.environ["CONF_DIR"]
 sys.path.append("tasks")
-running_id = os.environ["RUNNING_ID"]
+
+CONF_DIR = os.environ["CONF_DIR"]
+
+
+@retry(tries=3, delay=3)
+def connect_to_redis(db):
+    print("connecting to redis...")
+    return redis.StrictRedis(
+        host=os.environ["MASTER_HOST"],
+        port=os.environ["TASK_QUEUE_PORT"],
+        password=os.environ["TASK_QUEUE_PASSWD"],
+        db=db,
+        decode_responses=True,
+    )
+
+
+def initialize_running_id():
+    global RUNNING_ID
+
+    r = connect_to_redis(db=0)
+    persisted_running_id = r.get("fasttask:current_running_id")
+
+    if persisted_running_id:
+        RUNNING_ID = persisted_running_id
+        print(f"Using persisted RUNNING_ID: {RUNNING_ID}")
+    else:
+        RUNNING_ID = str(uuid.uuid4())
+        r.set("fasttask:current_running_id", RUNNING_ID)
+        print(f"Generated new RUNNING_ID to redis: {RUNNING_ID}")
+
+
+initialize_running_id()
 
 
 class TaskState(Enum):
@@ -95,13 +126,7 @@ def try_import_Data(task_model, DataName) -> type:
 
 
 def load_redis_task_infos() -> dict:
-    r = redis.Redis(
-        host=os.environ["MASTER_HOST"],
-        port=os.environ["TASK_QUEUE_PORT"],
-        password=os.environ["TASK_QUEUE_PASSWD"],
-        db="1",
-        decode_responses=True,
-    )
+    r = connect_to_redis(db=1)
     task_id_to_infos = dict()
     for i in range(r.llen("celery")):
         raw_info = json.loads(r.lindex("celery", i))
@@ -110,14 +135,7 @@ def load_redis_task_infos() -> dict:
             "status": TaskState.pending.value,
         }
 
-    r = redis.Redis(
-        host=os.environ["MASTER_HOST"],
-        port=os.environ["TASK_QUEUE_PORT"],
-        password=os.environ["TASK_QUEUE_PASSWD"],
-        db="2",
-        decode_responses=True,
-    )
-
+    r = connect_to_redis(db=2)
     for key in r.scan_iter(match="*"):
         raw_info = json.loads(r.get(key))
         task_id_to_infos[raw_info["task_id"]] = {
@@ -205,7 +223,7 @@ if get_bool_env("API_REVOKE"):
     @app.post(f"/revoke", response_model=ActionResp)
     def revoke(result_id: str, username: Annotated[str, Depends(get_current_username)]):
         resp = ActionResp()
-        if not result_id.startswith(running_id):
+        if not result_id.startswith(RUNNING_ID):
             resp.message = "invalid task id"
             return resp
 
@@ -277,7 +295,7 @@ def get_task_apis(task_name):
                 async_result = task.apply_async(
                     args=(),
                     kwargs=params.model_dump(),
-                    task_id=f"{running_id}-{uuid.uuid4()}",
+                    task_id=f"{RUNNING_ID}-{uuid.uuid4()}",
                     queue=task_name,
                 )
             except Exception:
@@ -295,11 +313,11 @@ def get_task_apis(task_name):
         def check(
             result_id: str, username: Annotated[str, Depends(get_current_username)]
         ):
-            if not result_id.startswith(running_id):
+            if not result_id.startswith(RUNNING_ID):
                 return ResultInfo(
                     id=result_id,
                     state=TaskState.failure.value,
-                    result=f"{result_id=} not exist, current {running_id=}",
+                    result=f"{result_id=} not exist, current {RUNNING_ID=}",
                 )
 
             async_result = celery_app.AsyncResult(result_id)
@@ -315,7 +333,3 @@ def get_task_apis(task_name):
 
 for task_name in load_task_names("tasks"):
     get_task_apis(task_name)
-
-
-if __name__ == "__main__":
-    uvicorn.run("api:app", host="0.0.0.0", port=8005, reload=True)
