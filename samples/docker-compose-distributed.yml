@@ -1,5 +1,3 @@
-version: "3.9"
-
 services:
   master:
     image: fasttask:test
@@ -15,10 +13,9 @@ services:
       - ./files-master:/fasttask/files
 
     environment:
-
       - NODE_TYPE=distributed_master
       - TASK_QUEUE_PASSWD=passwd
-
+      - SOFT_TIME_LIMIT=120
 
   worker-get_circle_area:
     image: fasttask:test
@@ -36,6 +33,8 @@ services:
       - TASK_QUEUE_PASSWD=passwd
       - ENABLED_TASKS=get_circle_area
       - DISABLED_TASKS=get_hypotenuse
+      - WORKER_CONCURRENCY=32
+      - SOFT_TIME_LIMIT=120
 
   worker-get_hypotenuse:
     image: fasttask:test
@@ -54,3 +53,5 @@ services:
       - TASK_QUEUE_PASSWD=passwd
       - ENABLED_TASKS=get_hypotenuse
       - DISABLED_TASKS=get_circle_area
+      - WORKER_CONCURRENCY=32
+      - SOFT_TIME_LIMIT=120
