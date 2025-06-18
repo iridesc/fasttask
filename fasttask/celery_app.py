@@ -46,6 +46,7 @@ app.conf.update(
         "broker_transport_options": {
             "visibility_timeout": int(os.environ["VISIBILITY_TIMEOUT"])
         },
+        "worker_terminate_timeout": 5,
     }
 )
 

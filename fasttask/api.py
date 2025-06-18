@@ -85,7 +85,7 @@ class ActionResp(BaseModel):
 class DownloadFileInfo(BaseModel):
     file_name: str = "lp.jpg"
 
- 
+
 class ResultIDParams(BaseModel):
     result_id: str
 
@@ -225,7 +225,10 @@ if get_bool_env("API_FILE_UPLOAD"):
 if get_bool_env("API_REVOKE"):
 
     @app.post(f"/revoke", response_model=ActionResp)
-    def revoke(result_id_params: ResultIDParams, username: Annotated[str, Depends(get_current_username)]):
+    def revoke(
+        result_id_params: ResultIDParams,
+        username: Annotated[str, Depends(get_current_username)],
+    ):
         resp = ActionResp()
         result_id = result_id_params.result_id
         if not result_id.startswith(RUNNING_ID):
@@ -243,20 +246,7 @@ if get_bool_env("API_REVOKE"):
             resp.message = "task ended or revoked already"
             return resp
 
-        async_result.revoke(terminate=True)
-
-        start_time = time.time()
-        while True:
-            time.sleep(1)
-            state = celery_app.AsyncResult(result_id).state
-            if state == TaskState.revoked.value:
-                break
-
-            print(f"waiting for to be revoked... {result_id=} {state=}")
-            if time.time() - start_time > 30:
-                resp.message = f"waiting for {result_id=} to be revoked timeout"
-                return resp
-
+        async_result.revoke(terminate=True, wait=True)
         resp.status = ActionStatus.success
         return resp
 
