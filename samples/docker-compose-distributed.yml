@@ -1,6 +1,6 @@
 services:
   master:
-    image: fasttask:test
+    image: fasttask:slim
     container_name: fasttask-master
     restart: always
 
@@ -16,7 +16,7 @@ services:
       - TASK_QUEUE_PASSWD=passwd
 
   worker-get_circle_area:
-    image: fasttask:test
+    image: fasttask:slim
     container_name: fasttask-worker-get_circle_area
     restart: always
 
@@ -30,7 +30,7 @@ services:
       - TASK_QUEUE_PASSWD=passwd
 
   worker-get_hypotenuse:
-    image: fasttask:test
+    image: fasttask:slim
     container_name: fasttask-worker-get_hypotenuse
     restart: always
 
