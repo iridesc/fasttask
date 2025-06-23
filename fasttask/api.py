@@ -246,7 +246,11 @@ if get_bool_env("API_REVOKE"):
             resp.message = "task ended or revoked already"
             return resp
 
-        async_result.revoke(terminate=True, wait=True)
+        async_result.revoke(terminate=True)
+        while True:
+            if celery_app.AsyncResult(result_id).state == TaskState.revoked.value:
+                break
+            time.sleep(1)
         resp.status = ActionStatus.success
         return resp
 
