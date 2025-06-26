@@ -12,9 +12,9 @@ services:
       - "9001:443"
       # 在distributed_master需要映射任务队列端口
       # - "9000:6379"
-
+      
       # webtop  related
-      - "3000:3000"
+      - 3000:3000
 
     volumes:
       - ./files:/fasttask/files
@@ -32,12 +32,12 @@ services:
       # - master_host=0.0.0.0
       # - TASK_QUEUE_PORT=9000
       # - TASK_QUEUE_PASSWD=passwd
-
+      
       # 启用的任务
       # - ENABLED_TASKS=task1,task2,task3
       # 禁用的任务
       # - DISABLED_TASKS=task1,task2,task3
-
+      
       # webtop  related
       - PUID=1000
       - PGID=1000
