@@ -1,3 +1,3 @@
 #!/bin/bash
-
-nohup sleep 30 && exec xfce4-terminal -x /fasttask/run.sh > /var/log/desktop_init.log 2>&1 &
+#更改了可能存在的自动执行顺序错误
+nohup bash -c 'sleep 30 && xfce4-terminal -x bash -c "cd /fasttask && python3 run.py; bash"' > /var/log/desktop_init.log 2>&1 &

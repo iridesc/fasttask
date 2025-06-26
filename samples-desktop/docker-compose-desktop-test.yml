@@ -9,12 +9,12 @@ services:
 
     ports:
       # 在single_node 与 distributed_master 需要映射api端口 
-      - "9001:443"
+      - "9002:443"
       # 在distributed_master需要映射任务队列端口
       - "9000:6379"
       
       # webtop  related
-      - 3000:3000
+      - 3003:3000
 
     volumes:
       - ./fasttask-desktop-master-files:/fasttask/files
