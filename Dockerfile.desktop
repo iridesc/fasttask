@@ -3,9 +3,8 @@ FROM linuxserver/webtop:debian-xfce
 ENV PYTHONDONTWRITEBYTECODE=1
 RUN apt update && apt install -y nano redis-server python3 python3-pip && ln -s /usr/bin/python3 /usr/bin/python
 COPY  desktop-init.sh /custom-cont-init.d/custom-cont-init.sh
-# 给脚本添加可执行权限，确保容器启动时能执行该脚本
 RUN chmod +x /custom-cont-init.d/custom-cont-init.sh
-#指令源路径问题？
+
 COPY fasttask/requirements.txt /fasttask/requirements.txt
 RUN pip install -r /fasttask/requirements.txt --break-system-packages
 
