@@ -9,8 +9,8 @@ services:
 
     ports:
       # 在single_node 与 distributed_master 需要映射api端口
-      - "9001:443" #端口是否需要更改？
-      # 在distributed_worker需要映射任务队列端口
+      - "9001:443"
+      # 在distributed_master需要映射任务队列端口
       # - "9000:6379"
 
       # webtop  related
@@ -21,7 +21,6 @@ services:
 
     environment:
       # single_node: 单一节点提供接口+执行任务
-      #大小写与run.py中环境变量要匹配
       - NODE_TYPE=single_node
 
       # # distributed_master: 分布式部署部署的主节点 提供api与任务队列后端
