@@ -1,11 +1,13 @@
 FROM linuxserver/webtop:debian-xfce
 
 ENV PYTHONDONTWRITEBYTECODE=1
-RUN apt update && apt install -y nano redis-server python3 python3-pip && ln -s /usr/bin/python3 /usr/bin/python
+RUN apt update && apt install -y nano redis-server python3 python3-pip && ln -s /usr/bin/python3 /usr/bin/python && \
+    apt install -y supervisor
 COPY  desktop-init.sh /custom-cont-init.d/custom-cont-init.sh
+RUN chmod +x /custom-cont-init.d/custom-cont-init.sh
 
-COPY /fasttask/req.txt /fasttask/req.txt
-RUN pip install -r /fasttask/req.txt --break-system-packages
+COPY fasttask/requirements.txt /fasttask/requirements.txt
+RUN pip install -r /fasttask/requirements.txt --break-system-packages
 
 COPY fasttask /fasttask
 WORKDIR /fasttask

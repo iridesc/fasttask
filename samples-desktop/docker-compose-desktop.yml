@@ -8,7 +8,7 @@ services:
       - seccomp:unconfined
 
     ports:
-      # 在single_node 与 distributed_master 需要映射api端口 
+      # 在single_node 与 distributed_master 需要映射api端口
       - "9001:443"
       # 在distributed_master需要映射任务队列端口
       # - "9000:6379"
@@ -21,14 +21,14 @@ services:
 
     environment:
       # single_node: 单一节点提供接口+执行任务
-      - node_type=single_node
+      - NODE_TYPE=single_node
 
       # # distributed_master: 分布式部署部署的主节点 提供api与任务队列后端
-      # - node_type=distributed_master
+      # - NODE_TYPE=distributed_master
       # - TASK_QUEUE_PASSWD=passwd
 
       # # distributed_worker: 分布式部署部署的从节点 负责cerery任务执行环境,需要配置distributed_master的主机地址, 任务队列端口与密码
-      # - node_type=distributed_worker
+      # - NODE_TYPE=distributed_worker
       # - master_host=0.0.0.0
       # - TASK_QUEUE_PORT=9000
       # - TASK_QUEUE_PASSWD=passwd
