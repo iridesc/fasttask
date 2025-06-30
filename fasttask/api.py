@@ -232,26 +232,38 @@ if get_bool_env("API_REVOKE"):
         resp = ActionResp()
         result_id = result_id_params.result_id
         if not result_id.startswith(RUNNING_ID):
-            resp.message = "invalid task id"
+            resp.message = f"invalid {result_id=} current {RUNNING_ID=}"
             return resp
 
         async_result = celery_app.AsyncResult(result_id)
 
-        if async_result.state in [
+        state = async_result.state
+        async_result.revoke(terminate=True)
+
+        if state in [
             TaskState.success.value,
             TaskState.failure.value,
             TaskState.revoked.value,
         ]:
-            resp.status = ActionStatus.success
             resp.message = "task ended or revoked already"
-            return resp
+            resp.status = ActionStatus.success
 
-        async_result.revoke(terminate=True)
-        while True:
-            if celery_app.AsyncResult(result_id).state == TaskState.revoked.value:
-                break
-            time.sleep(1)
-        resp.status = ActionStatus.success
+        elif state == TaskState.pending.value:
+            resp.message = "task is still pending, will revoked later"
+            resp.status = ActionStatus.success
+
+        elif state == TaskState.started.value:
+            resp.message = "task started, revoking now"
+            resp.status = ActionStatus.success
+
+        elif state == TaskState.retry.value:
+            resp.message = "task retrying, revoking now"
+            resp.status = ActionStatus.success
+
+        else:
+            resp.message = f"unknown task state {state=}"
+            resp.status = ActionStatus.failure
+
         return resp
 
 
