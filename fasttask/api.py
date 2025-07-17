@@ -1,18 +1,15 @@
 import json
 import os
 import sys
-import time
 import uuid
 import secrets
 import traceback
 
-import uvicorn
 import redis
 
 from enum import Enum
 from typing import Any, Union, Annotated
 from importlib import import_module
-from retry import retry
 from pydantic import BaseModel
 from starlette.responses import FileResponse
 from fastapi import Depends, FastAPI, HTTPException, status, UploadFile
@@ -30,33 +27,29 @@ from setting import project_title, project_description, project_summary, project
 sys.path.append("tasks")
 
 CONF_DIR = os.environ["CONF_DIR"]
-
-
-@retry(tries=3, delay=3)
-def connect_to_redis(db):
-    print("connecting to redis...")
-    return redis.StrictRedis(
-        host=os.environ["MASTER_HOST"],
-        port=os.environ["TASK_QUEUE_PORT"],
-        password=os.environ["TASK_QUEUE_PASSWD"],
-        db=db,
-        decode_responses=True,
-    )
+redis_params = {
+    "host": os.environ["MASTER_HOST"],
+    "port": os.environ["TASK_QUEUE_PORT"],
+    "password": os.environ["TASK_QUEUE_PASSWD"],
+    "decode_responses": True,
+}
 
 
 def initialize_running_id():
     global RUNNING_ID
+    with redis.StrictRedis(
+        **redis_params,
+        db=0,
+    ) as r:
+        persisted_running_id = r.get("fasttask:current_running_id")
 
-    r = connect_to_redis(db=0)
-    persisted_running_id = r.get("fasttask:current_running_id")
-
-    if persisted_running_id:
-        RUNNING_ID = persisted_running_id
-        print(f"Using persisted RUNNING_ID: {RUNNING_ID}")
-    else:
-        RUNNING_ID = str(uuid.uuid4())
-        r.set("fasttask:current_running_id", RUNNING_ID)
-        print(f"Generated new RUNNING_ID to redis: {RUNNING_ID}")
+        if persisted_running_id:
+            RUNNING_ID = persisted_running_id
+            print(f"Using persisted RUNNING_ID: {RUNNING_ID}")
+        else:
+            RUNNING_ID = str(uuid.uuid4())
+            r.set("fasttask:current_running_id", RUNNING_ID)
+            print(f"Generated new RUNNING_ID to redis: {RUNNING_ID}")
 
 
 initialize_running_id()
@@ -130,23 +123,28 @@ def try_import_Data(task_model, DataName) -> type:
 
 
 def load_redis_task_infos() -> dict:
-    r = connect_to_redis(db=1)
-    task_id_to_infos = dict()
-    for i in range(r.llen("celery")):
-        raw_info = json.loads(r.lindex("celery", i))
-        task_id_to_infos[raw_info["headers"]["id"]] = {
-            "task": raw_info["headers"]["task"],
-            "status": TaskState.pending.value,
-        }
-
-    r = connect_to_redis(db=2)
-    for key in r.scan_iter(match="*"):
-        raw_info = json.loads(r.get(key))
-        task_id_to_infos[raw_info["task_id"]] = {
-            "task": raw_info["name"],
-            "status": raw_info["status"],
-        }
-    return task_id_to_infos
+    with redis.StrictRedis(
+        **redis_params,
+        db=1,
+    ) as r:
+        task_id_to_infos = dict()
+        for i in range(r.llen("celery")):
+            raw_info = json.loads(r.lindex("celery", i))
+            task_id_to_infos[raw_info["headers"]["id"]] = {
+                "task": raw_info["headers"]["task"],
+                "status": TaskState.pending.value,
+            }
+    with redis.StrictRedis(
+        **redis_params,
+        db=2,
+    ) as r:
+        for key in r.scan_iter(match="*"):
+            raw_info = json.loads(r.get(key))
+            task_id_to_infos[raw_info["task_id"]] = {
+                "task": raw_info["name"],
+                "status": raw_info["status"],
+            }
+        return task_id_to_infos
 
 
 doc_url = None
