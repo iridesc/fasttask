@@ -1,3 +1,4 @@
+import datetime
 import json
 import os
 import sys
@@ -25,6 +26,8 @@ from tools import (
 from setting import project_title, project_description, project_summary, project_version
 
 sys.path.append("tasks")
+
+TASK_NAMES = load_task_names("tasks")
 
 CONF_DIR = os.environ["CONF_DIR"]
 redis_params = {
@@ -123,17 +126,24 @@ def try_import_Data(task_model, DataName) -> type:
 
 
 def load_redis_task_infos() -> dict:
+    task_id_to_infos = dict()
+
     with redis.StrictRedis(
         **redis_params,
         db=1,
     ) as r:
-        task_id_to_infos = dict()
-        for i in range(r.llen("celery")):
-            raw_info = json.loads(r.lindex("celery", i))
-            task_id_to_infos[raw_info["headers"]["id"]] = {
-                "task": raw_info["headers"]["task"],
-                "status": TaskState.pending.value,
-            }
+        for task_name in TASK_NAMES:
+            for i in range(r.llen(task_name)):
+                raw_data = r.lindex(task_name, i)
+                if not raw_data:
+                    continue
+                raw_info = json.loads(raw_data)
+                task_id_to_infos[raw_info["headers"]["id"]] = {
+                    "task": task_name,
+                    "status": TaskState.pending.value,
+                    "date_done": None,
+                }
+
     with redis.StrictRedis(
         **redis_params,
         db=2,
@@ -141,10 +151,42 @@ def load_redis_task_infos() -> dict:
         for key in r.scan_iter(match="*"):
             raw_info = json.loads(r.get(key))
             task_id_to_infos[raw_info["task_id"]] = {
-                "task": raw_info["name"],
+                "task": raw_info["name"].split(".")[1],
                 "status": raw_info["status"],
+                "date_done": raw_info["date_done"],
             }
         return task_id_to_infos
+
+
+def get_worker_status() -> dict:
+    def get_task_infos(worker_name, handle):
+        return [info["id"] for info in handle.get(worker_name, [])]
+
+    def get_worker_info(worker_name):
+        info = inspector.stats().get(worker_name, {})
+        return {
+            "total": info.get("total"),
+            "uptime": info.get("uptime"),
+            "pool.max-concurrency": info.get("pool", dict()).get("max-concurrency"),
+            "prefetch_count": info.get("prefetch_count"),
+            "rusage.maxrss": info.get("rusage", dict()).get("maxrss"),
+        }
+
+    inspector = celery_app.control.inspect()
+    online_worker_names = list(inspector.ping().keys())
+    return {
+        "online_worker_count": len(online_worker_names),
+        "online_workers_list": online_worker_names,
+        "worker_details": {
+            worker_name: {
+                "active_tasks": get_task_infos(worker_name, inspector.active()),
+                "reserved_tasks": get_task_infos(worker_name, inspector.reserved()),
+                "scheduled_tasks": get_task_infos(worker_name, inspector.scheduled()),
+                **get_worker_info(worker_name),
+            }
+            for worker_name in online_worker_names
+        },
+    }
 
 
 doc_url = None
@@ -166,26 +208,75 @@ app = FastAPI(
 )
 
 
+def get_task_statistics_info(task_infos, end_time, task_name=None):
+    time_range_key_to_seconds = {
+        "1_minute": 60,
+        "15_minute": 900,
+        "1_hour": 3600,
+        "1_day": 86400,
+    }
+    completed_counts = dict()
+    status_to_amount = dict()
+    for task_info in task_infos:
+        if task_name and task_info["task"] != task_name:
+            continue
+        status = task_info["status"]
+        status_to_amount.setdefault(status, 0)
+        status_to_amount[status] += 1
+
+        for status in ["SUCCESS", "FAILURE"]:
+            if task_info["status"] != status:
+                continue
+
+            completed_at = datetime.datetime.fromisoformat(task_info["date_done"])
+
+            for time_range_key, seconds in time_range_key_to_seconds.items():
+                counter_name = f"{status.lower()}_in_{time_range_key}"
+                completed_counts.setdefault(counter_name, 0)
+                if (
+                    end_time - datetime.timedelta(seconds=seconds)
+                    <= completed_at
+                    <= end_time
+                ):
+                    completed_counts[counter_name] += 1
+
+    throughput = dict()
+    for status_prefix in ["success", "failure"]:
+        for window_suffix, seconds in time_range_key_to_seconds.items():
+            count_key = f"{status_prefix}_in_{window_suffix}"
+
+            throughput[count_key] = (
+                round(completed_counts.get(count_key, 0) / seconds, 2)
+                if seconds > 0
+                else 0.0
+            )
+
+    return {
+        "status_to_amount": status_to_amount,
+        "completed_counts": completed_counts,
+        "throughput_rates_per_second": throughput,
+    }
+
+
 if get_bool_env("API_STATUS_INFO"):
 
     @app.get("/status_info")
     def status_info(username: Annotated[str, Depends(get_current_username)]):
-        task_to_statistics_info = dict()
-        status_to_amount = dict()
+        info = {"username": username, "worker_status": get_worker_status()}
 
-        for task_info in load_redis_task_infos().values():
-            status = task_info["status"]
-            task = task_info["task"]
-            status_to_amount.setdefault(status, 0)
-            status_to_amount[status] += 1
-            task_to_statistics_info.setdefault(task, dict()).setdefault(status, 0)
-            task_to_statistics_info[task][status] += 1
+        task_infos = load_redis_task_infos().values()
 
-        return {
-            "username": username,
-            "status_to_amount": status_to_amount,
-            "task_to_amount_status_statics": task_to_statistics_info,
-        }
+        end_time = datetime.datetime.now(datetime.timezone.utc)
+        info["total"] = get_task_statistics_info(
+            end_time=end_time, task_infos=task_infos
+        )
+
+        for task_name in TASK_NAMES:
+            info[task_name] = get_task_statistics_info(
+                end_time=end_time, task_infos=task_infos, task_name=task_name
+            )
+
+        return info
 
 
 if get_bool_env("API_FILE_DOWNLOAD"):
@@ -340,5 +431,5 @@ def get_task_apis(task_name):
             return ResultInfo(id=result_id, state=async_result.state, result=result)
 
 
-for task_name in load_task_names("tasks"):
+for task_name in TASK_NAMES:
     get_task_apis(task_name)
