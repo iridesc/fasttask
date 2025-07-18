@@ -2,7 +2,7 @@ FROM linuxserver/webtop:debian-xfce
 
 ENV PYTHONDONTWRITEBYTECODE=1
 RUN apt update && apt install -y nano redis-server python3 python3-pip && ln -s /usr/bin/python3 /usr/bin/python && \
-    apt install -y supervisor
+    apt install -y supervisor && apt-get clean && rm -rf /var/lib/apt/lists/*
 
 COPY fasttask/requirements.txt /fasttask/requirements.txt
 RUN pip install -r /fasttask/requirements.txt --break-system-packages
