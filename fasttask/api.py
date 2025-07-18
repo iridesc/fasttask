@@ -5,9 +5,9 @@ import sys
 import uuid
 import secrets
 import traceback
-
 import redis
-
+import secrets
+import string
 from enum import Enum
 from typing import Any, Union, Annotated
 from importlib import import_module
@@ -38,20 +38,25 @@ redis_params = {
 }
 
 
+def generate_id(length=12):
+    alphabet = string.ascii_letters + string.digits
+    return "".join(secrets.choice(alphabet) for _ in range(length))
+
+
 def initialize_running_id():
     global RUNNING_ID
+    db_key = "fasttask:current_running_id"
     with redis.StrictRedis(
         **redis_params,
         db=0,
     ) as r:
-        persisted_running_id = r.get("fasttask:current_running_id")
-
+        persisted_running_id = r.get(db_key)
         if persisted_running_id:
             RUNNING_ID = persisted_running_id
             print(f"Using persisted RUNNING_ID: {RUNNING_ID}")
         else:
-            RUNNING_ID = str(uuid.uuid4())
-            r.set("fasttask:current_running_id", RUNNING_ID)
+            RUNNING_ID = generate_id(8)
+            r.set(db_key, RUNNING_ID)
             print(f"Generated new RUNNING_ID to redis: {RUNNING_ID}")
 
 
@@ -155,7 +160,7 @@ def load_redis_task_infos() -> dict:
                 "status": raw_info["status"],
                 "date_done": raw_info["date_done"],
             }
-        return task_id_to_infos
+    return task_id_to_infos
 
 
 def get_worker_status() -> dict:
@@ -262,17 +267,21 @@ if get_bool_env("API_STATUS_INFO"):
 
     @app.get("/status_info")
     def status_info(username: Annotated[str, Depends(get_current_username)]):
-        info = {"username": username, "worker_status": get_worker_status()}
+        info = {
+            "running_id": RUNNING_ID,
+            "username": username,
+            "worker_status": get_worker_status(),
+        }
 
         task_infos = load_redis_task_infos().values()
-
         end_time = datetime.datetime.now(datetime.timezone.utc)
-        info["total"] = get_task_statistics_info(
+
+        info["task_info_total"] = get_task_statistics_info(
             end_time=end_time, task_infos=task_infos
         )
 
         for task_name in TASK_NAMES:
-            info[task_name] = get_task_statistics_info(
+            info[f"task_info_{task_name}"] = get_task_statistics_info(
                 end_time=end_time, task_infos=task_infos, task_name=task_name
             )
 
