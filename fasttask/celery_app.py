@@ -43,10 +43,21 @@ app.conf.update(
         "task_acks_late": True,
         "worker_prefetch_multiplier": 1,
         "task_reject_on_worker_lost": True,
-        "broker_transport_options": {
-            "visibility_timeout": int(os.environ["VISIBILITY_TIMEOUT"])
-        },
         "worker_terminate_timeout": 5,
+        "broker_transport_options": {
+            "visibility_timeout": int(os.environ["VISIBILITY_TIMEOUT"]),
+            # Redis 连接建立超时 (秒)
+            "socket_connect_timeout": 5,
+            # Redis 读写操作超时及空闲连接清理超时 (秒)
+            "socket_timeout": 60,
+            # Redis 连接健康检查间隔 (秒)
+            "health_check_interval": 60,
+        },
+        "result_backend_transport_options": {
+            "socket_connect_timeout": 5,
+            "socket_timeout": 60,
+            "health_check_interval": 60,
+        },
     }
 )
 

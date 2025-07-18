@@ -4,17 +4,12 @@ ENV TINI_VERSION v0.19.0
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 
-
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends curl && \
+    apt-get install -y --no-install-recommends curl redis-server supervisor && \
     curl -sSL https://github.com/krallin/tini/releases/download/${TINI_VERSION}/tini-amd64 -o /usr/local/bin/tini && \
     chmod +x /usr/local/bin/tini && \
     apt-get remove --purge -y curl && \
     apt-get clean && \
-    rm -rf /var/lib/apt/lists/*
-
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends redis-server supervisor && \
     rm -rf /var/lib/apt/lists/*
 
 COPY fasttask/requirements.txt /tmp/requirements.txt

@@ -1,28 +1,35 @@
+from concurrent.futures import ThreadPoolExecutor
 from fasttask_manager.manager import Manager
 
 
-for i in range(1, 101):
-    r =  Manager(
-        "127.0.0.1",
-        port="9001",
-        task_name="get_circle_area",
-        protocol="https",
-    ).create_task(
-        {
-            "r": i,
-        }
+with ThreadPoolExecutor(max_workers=16) as executor:
+    executor.map(
+        lambda x: Manager(
+            "127.0.0.1",
+            port="9001",
+            task_name="get_circle_area",
+            protocol="https",
+        ).create_task(
+            {
+                "r": x,
+            }
+        ),
+        range(1, 20000),
     )
-    print(r)
 
-for a, b in [(i, i) for i in range(1, 101)]:
-    Manager(
-        "127.0.0.1",
-        port="9001",
-        task_name="get_hypotenuse",
-        protocol="https",
-    ).create_task(
-        {
-            "a": 3,
-            "b": 4,
-        }
+
+with ThreadPoolExecutor(max_workers=16) as executor:
+    executor.map(
+        lambda x: Manager(
+            "127.0.0.1",
+            port="9001",
+            task_name="get_hypotenuse",
+            protocol="https",
+        ).create_task(
+            {
+                "a": x,
+                "b": x + 1,
+            }
+        ),
+        range(1, 20000),
     )

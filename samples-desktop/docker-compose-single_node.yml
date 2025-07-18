@@ -1,0 +1,28 @@
+services:
+  fasttask:
+    image: fasttask:desktop
+    container_name: fasttask-desktop
+    restart: always
+
+    security_opt:
+      - seccomp:unconfined
+
+    ports:
+      # 在single_node 与 distributed_master 需要映射api端口
+      - "9001:443"
+      
+      # webtop  related
+      - 3000:3000
+
+    volumes:
+      - ./files:/fasttask/files
+
+    environment:
+      # single_node: 单一节点提供接口+执行任务
+      - NODE_TYPE=single_node
+
+      # webtop  related
+      - PUID=1000
+      - PGID=1000
+      - TITLE=fasttask-desktop
+      - PASSWORD=webtop_passwd

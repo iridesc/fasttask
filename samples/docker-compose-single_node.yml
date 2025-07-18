@@ -2,7 +2,6 @@ services:
   fasttask:
     image: fasttask:test
     container_name: fasttask
-    command: ["python", "run.py"]
     restart: always
 
     ports:
