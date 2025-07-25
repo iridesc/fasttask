@@ -5,7 +5,7 @@ import uuid
 
 from load_tasks import load_tasks
 
-log_prefix = "fasttask ---->>"
+log_prefix = "FastTask --->"
 
 
 class Env:
@@ -94,15 +94,12 @@ def export_default_env(env_key, env_value, force=False):
 
 def show_banner():
     print("""
-                                  /\\_/\\
-                                 ( o.o )
-                                 > ^ <   F A S T T A S K
-                              ///|||||\\\\\\
-                             ⚡⚡⚡⚡⚡⚡⚡⚡⚡⚡⚡
-                             >>  B O O T I N G  U P  <<
-                             ⚡⚡⚡⚡⚡⚡⚡⚡⚡⚡⚡
 
-    """)
+          
+            ⚡⚡⚡⚡⚡⚡⚡⚡⚡  F A S T T A S K  ⚡⚡⚡⚡⚡⚡⚡⚡⚡
+
+          
+""")
 
 
 env_type_to_envs = {
@@ -196,7 +193,7 @@ env_type_to_envs = {
         Env("TASK_QUEUE_PORT", "6379", force_default=True),
         Env("TASK_QUEUE_PASSWD", "passwd", force_default=True),
         # master default
-        Env("UVICORN_WORKERS", os.cpu_count()),
+        Env("UVICORN_WORKERS", 1),
         Env("API_DOCS", "True"),
         Env("API_REDOC", "True"),
         Env("API_STATUS_INFO", "True"),
@@ -211,7 +208,7 @@ env_type_to_envs = {
         Env("MASTER_HOST", "0.0.0.0", force_default=True),
         Env("TASK_QUEUE_PORT", "6379", force_default=True),
         Env("TASK_QUEUE_PASSWD"),
-        Env("UVICORN_WORKERS", os.cpu_count()),
+        Env("UVICORN_WORKERS", 1),
         Env("API_DOCS", "True"),
         Env("API_REDOC", "True"),
         Env("API_STATUS_INFO", "True"),

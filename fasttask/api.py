@@ -54,10 +54,11 @@ def initialize_running_id():
         if persisted_running_id:
             RUNNING_ID = persisted_running_id
             print(f"Using persisted RUNNING_ID: {RUNNING_ID}")
-        else:
-            RUNNING_ID = generate_id(8)
-            r.set(db_key, RUNNING_ID)
-            print(f"Generated new RUNNING_ID to redis: {RUNNING_ID}")
+            return
+
+        RUNNING_ID = generate_id(8)
+        RUNNING_ID = RUNNING_ID if r.set(db_key, RUNNING_ID, nx=True) else r.get(db_key)
+        print(f"Generated new RUNNING_ID to redis: {RUNNING_ID}")
 
 
 initialize_running_id()
