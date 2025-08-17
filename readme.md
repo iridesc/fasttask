@@ -96,7 +96,7 @@ FastTask提供以下核心功能：
 6. 调用
     访问 ```https://localhost/docs```
     
-    ![alt text](doc_images/image.png)
+    ![alt text](images/image.png)
     
     你会看到以下接口：
 
@@ -115,10 +115,10 @@ FastTask提供以下核心功能：
 
     以get_hypotenuse为例进行异步调用：
     - 在create 接口中填写参数 点击 execute后会拿到任务id
-    ![alt text](doc_images/image-1.png)
-    ![alt text](doc_images/image-2.png)
+    ![alt text](images/image-1.png)
+    ![alt text](images/image-2.png)
     - 在check接口中填写任务id 点击execute后，会返回任务结果
-    ![alt text](doc_images/image-3.png)
+    ![alt text](images/image-3.png)
 
 # 分布式部署
 
@@ -182,19 +182,25 @@ FastTask提供以下核心功能：
 }
 ```
 
+# 文件
+你可以通过upload接口上传你任务中所必要的文件，这个文件被放在```/fasttask/files/0caee52c-b2ca-4c04-b040-82bd952192da_1.xlsx```目录下， 你的任务代码可以打开并处理文件
+
+当任务结果需要输出到文件时， 你可以把文件保存在```/fasttask/files/0caee52c-b2ca-4c04-b040-82bd952192da_1.xlsx```， 然后你可以调用download接口下载文件。
+
+
 # 核心配置
 
+- **SOFT_TIME_LIMIT**： 运行时间限制， 单位秒， 配置时默认为1天， 超过该时间任务进程会被直接杀死， 任务状态会变为失败
+- **RESULT_EXPIRES**： 结果过期时间， 单位秒， 配置时默认为3天， 超过该时间任务结果会被删除
+- **WORKER_CONCURRENCY**： 并发数， 默认为cpu核数
+- **API_x**： 接口是否启用配置，默认为 True，比如 API_RUN为 False时, 所有任务的run接口都会被禁用
+- **ENABLED_TASKS**： 逗号分隔的任务名称列表（例如 get_circle_area,get_hypotenuse）。如果设置，此 Worker 只会处理这些指定的任务。优先级高于 - DISABLED_TASKS。
+- **DISABLED_TASKS**：逗号分隔的任务名称列表。如果设置，此 Worker 将不处理这些指定的任务。
+
 更多配置餐参考[./fasttask/run.py](https://github.com/iridesc/fasttask/blob/main/fasttask/run.py) env_type_to_envs
-
-- SOFT_TIME_LIMIT： 运行时间限制， 单位秒， 配置时默认为1天， 超过该时间任务进程会被直接杀死， 任务状态会变为失败
-- RESULT_EXPIRES： 结果过期时间， 单位秒， 配置时默认为3天， 超过该时间任务结果会被删除
-- WORKER_CONCURRENCY： 并发数， 默认为cpu核数
-- API_*： 接口是否启用配置，默认为 True，比如 API_RUN为 False时, 所有任务的run接口都会被禁用
-- ENABLED_TASKS 逗号分隔的任务名称列表（例如 get_circle_area,get_hypotenuse）。如果设置，此 Worker 只会处理这些指定的任务。优先级高于 - DISABLED_TASKS。
-- DISABLED_TASKS	逗号分隔的任务名称列表。如果设置，此 Worker 将不处理这些指定的任务。
-
 
 # todo
 - 在认证通过前 不展示 docs页面
 - check 接口增加任务创建 更新时间
 - 实现自定义的并发控制
+- 基于结果有效时间，自动清理文件
