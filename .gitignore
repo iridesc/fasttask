@@ -11,3 +11,4 @@ samples-desktop/files/
 samples-desktop/files-master/
 samples-desktop/files-worker_1/
 samples-desktop/files-worker_2/
+tini/tini-amd64
