@@ -35,6 +35,7 @@ redis_params = {
     "port": os.environ["TASK_QUEUE_PORT"],
     "password": os.environ["TASK_QUEUE_PASSWD"],
     "decode_responses": True,
+    "socket_connect_timeout": 5,
 }
 
 
