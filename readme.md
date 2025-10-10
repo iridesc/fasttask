@@ -174,7 +174,7 @@ FastTask提供以下核心功能：
 
 # 认证
 
-当存在有效的```files/fasttask/conf/user_to_passwd.conf```时， 自动启用认证功能， 文件内容参考：
+当存在有效的```files/fasttask/conf/user_to_passwd.json```时， 自动启用认证功能， 文件内容参考：
 ```json
 {
 "user_A": "user_A_passwd",
