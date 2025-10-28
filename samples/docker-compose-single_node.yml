@@ -1,13 +1,13 @@
 services:
   fasttask:
-    image: fasttask:test
+    image: irid/fasttask:test
     container_name: fasttask
     restart: always
 
     ports:
       # 映射api端口 
       - "9001:443"
-        
+
     volumes:
       - ./files:/fasttask/files
 
