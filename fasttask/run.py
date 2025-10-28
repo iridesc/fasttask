@@ -3,7 +3,7 @@ import os
 import subprocess
 import uuid
 
-from load_tasks import load_tasks
+from utils.tools import load_tasks
 
 log_prefix = "FastTask --->"
 

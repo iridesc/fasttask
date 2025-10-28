@@ -3,6 +3,10 @@ env/*
 .vscode/*
 *.pyc
 
+*.log
+
+*.pid
+
 samples/files/
 samples/files-master/
 samples/files-worker_1/
@@ -12,3 +16,7 @@ samples-desktop/files-master/
 samples-desktop/files-worker_1/
 samples-desktop/files-worker_2/
 tini/tini-amd64
+
+
+fasttask/files/
+fasttask/loaded_tasks/
