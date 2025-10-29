@@ -7,6 +7,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from fasttask_manager.manager import Manager
 from requests import HTTPError
+
 auth_user = "admin"
 auth_passwd = "passwd"
 
@@ -73,10 +74,11 @@ def test_status_info(manager=manager):
     # manager.
     ...
 
+
 def test_revoke(manager=manager):
     result_ids = []
     for _ in range(10):
-        result_ids.append(manager.create_task(data)["id"]) 
+        result_ids.append(manager.create_task(data)["id"])
 
     for result_id in result_ids:
         manager.revoke(result_id)
@@ -85,6 +87,7 @@ def test_revoke(manager=manager):
         state = manager.check(result_id)["state"]
         print(f"{result_id=} {state=}")
         assert state == "REVOKED", "task not revoked"
+
 
 def test_all_api(manager, expect_access=True):
     for f in [
@@ -115,6 +118,8 @@ def create_auth_file():
             indent=2,
         )
     print(f"auth file created")
+
+
 def test_auth():
     create_auth_file()
     print(f"auth file created,")
@@ -128,6 +133,7 @@ def test_auth():
     os.remove(auth_file)
     print("auth file removed, wait for reload")
     wait(60)
+
 
 def run_single_task_metadata(manager: Manager, request_id: int):
     """
@@ -214,36 +220,37 @@ def test_concurrency_metadata_performance(unauthed_manager: Manager):
     assert success_count == TOTAL_REQUESTS, (
         f"并发测试失败：{TOTAL_REQUESTS - success_count} 个请求对失败。"
     )
-
+    assert throughput > 120, "吞吐率低于 120 请求对/秒。"
     # 根据需要添加性能阈值断言
     # assert average_response_time < 0.1, "平均响应时间超过阈值 0.1 秒。"
 
     print("-" * 50)
     print("test_concurrency_metadata_performance pass")
 
+
 # todo
 # test status info
 # test revoke api
+
 
 def wait(n, f=None):
     for i in range(n):
         if f and f():
             print("ready. continue...")
             return
-        print(f"wait {i}/{n}...")    
+        print(f"wait {i}/{n}...")
         time.sleep(1)
 
 
-def is_ready():
-    ...
+def is_ready(): ...
 
 
 if __name__ == "__main__":
     for compose in [
         "samples/docker-compose-single_node.yml",
-        # "samples/docker-compose-distributed.yml",
-        # "samples/docker-compose-desktop-single_node.yml",
-        # "samples/docker-compose-desktop-distributed.yml",
+        "samples/docker-compose-distributed.yml",
+        "samples/docker-compose-desktop-single_node.yml",
+        "samples/docker-compose-desktop-distributed.yml",
     ]:
         print("-" * 20)
         print(f"testing {compose}...")
@@ -253,9 +260,8 @@ if __name__ == "__main__":
         os.system(f"docker compose -f '{compose}' up -d")
         wait(10)
 
-        # test_auth()
-        # test_all_api(manager)
-
+        test_auth()
+        test_all_api(manager)
         test_concurrency_metadata_performance(manager)
 
         os.system(f"docker compose -f '{compose}' down")
