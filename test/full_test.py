@@ -7,14 +7,20 @@ import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from fasttask_manager.manager import Manager
 from requests import HTTPError
+from logging import getLogger
+
+logger = getLogger(__name__)
+
 
 auth_user = "admin"
 auth_passwd = "passwd"
 
-
-CONCURRENCY_LEVEL = 50  # 同时运行的线程/用户数量
-REQUESTS_PER_THREAD = 20  # 每个线程发送的请求数量
+CONCURRENCY_LEVEL = 100  # 同时运行的线程/用户数量
+REQUESTS_PER_THREAD = 100  # 每个线程发送的请求数量
 TOTAL_REQUESTS = CONCURRENCY_LEVEL * REQUESTS_PER_THREAD  # 总请求量 (1000)
+
+
+auth_file = "samples/files/fasttask/conf/user_to_passwd.json"
 
 manager_params = {
     "host": "127.0.0.1",
@@ -22,18 +28,15 @@ manager_params = {
     "protocol": "https",
     "task_name": "get_circle_area",
     "tries": 1,
+    "logger": logger,
 }
-auth_file = "samples/files/fasttask/conf/user_to_passwd.json"
-
-
 manager = Manager(**manager_params)
-
-
 authed_manager = Manager(
     **manager_params,
     auth_user=auth_user,
     auth_passwd=auth_passwd,
 )
+logger.setLevel("WARNING")
 
 
 data = {
@@ -135,6 +138,12 @@ def test_auth():
     wait(60)
 
 
+def test_wrong_running_id_request(manager: Manager):
+    resp = manager.check("wrong_id")
+    assert resp["state"] == "FAILURE"
+    assert "RUNNING_ID" in resp["result"]
+
+
 def run_single_task_metadata(manager: Manager, request_id: int):
     """
     单个线程执行任务的核心逻辑：仅创建任务和检查状态。
@@ -143,16 +152,10 @@ def run_single_task_metadata(manager: Manager, request_id: int):
     task_id = None
 
     try:
-        # 1. 创建任务 (create_task)
         task_id = manager.create_task(data)["id"]
-
-        # 2. 检查状态 (check)
-        # 此时任务预期处于 PENDING 或 QUEUED 状态，我们只关心接口响应速度
-        state = manager.check(task_id)["state"]
-
-        # 可以在这里添加一个辅助断言，确保任务没有意外快速完成
-        # assert state in ["PENDING", "QUEUED", "STARTED"], "任务状态异常"
-
+        manager.check(task_id)["state"]
+        manager.revoke(task_id)
+        manager.check(task_id)["state"]
         return time.time() - start_time, True  # (耗时, 成功)
 
     except Exception as e:
@@ -213,14 +216,14 @@ def test_concurrency_metadata_performance(unauthed_manager: Manager):
     print(f"总请求数 (Total):      {TOTAL_REQUESTS} (每次包含 create+check)")
     print(f"成功请求数 (Success):  {success_count}")
     print(f"总耗时 (Elapsed Time): {elapsed_time:.3f} 秒")
-    print(f"平均响应时间 (Avg RT): {average_response_time:.4f} 秒/请求对")
-    print(f"吞吐率 (RPS):          {throughput:.2f} 请求对/秒")
+    print(f"平均响应时间 (Avg RT): {average_response_time:.4f} 秒/请求组")
+    print(f"吞吐率 (RPS):          {throughput:.2f} 请求组/秒")
 
-    # 核心断言：所有请求对必须成功
+    # 核心断言：所有请求组必须成功
     assert success_count == TOTAL_REQUESTS, (
-        f"并发测试失败：{TOTAL_REQUESTS - success_count} 个请求对失败。"
+        f"并发测试失败：{TOTAL_REQUESTS - success_count} 个请求组失败。"
     )
-    assert throughput > 120, "吞吐率低于 120 请求对/秒。"
+    assert throughput > 50, "吞吐率低于 50 请求组/秒。"
     # 根据需要添加性能阈值断言
     # assert average_response_time < 0.1, "平均响应时间超过阈值 0.1 秒。"
 
@@ -230,7 +233,8 @@ def test_concurrency_metadata_performance(unauthed_manager: Manager):
 
 # todo
 # test status info
-# test revoke api
+# redis connection test
+# release redis data
 
 
 def wait(n, f=None):
