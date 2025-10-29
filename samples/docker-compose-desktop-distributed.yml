@@ -13,7 +13,7 @@ services:
       # 在distributed_master需要映射任务队列端口
       - "9000:6379"
       # webtop  related
-      - 3000:3000
+      - 3000:3001
 
     volumes:
        - ./files:/fasttask/files
@@ -39,7 +39,7 @@ services:
 
     ports:
       # webtop  related
-      - 3001:3000
+      - 3001:3001
 
     volumes:
       - ./files-worker_1:/fasttask/files
@@ -68,7 +68,7 @@ services:
 
     ports:
       # webtop  related
-      - 3002:3000
+      - 3002:3001
 
     volumes:
       - ./files-worker_2:/fasttask/files
