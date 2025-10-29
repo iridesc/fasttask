@@ -43,6 +43,6 @@ def xx(x):
 
 
 def sleep_random():
-    for _ in range(10):
+    for _ in range(3):
         time.sleep(random() * 5)
         print("...")

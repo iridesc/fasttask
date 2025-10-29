@@ -19,9 +19,7 @@ def get_circle_area(r):
         raise ValueError("r must > 0")
     print("running...")
     sleep_random()
-    result = Result(area=pi * r**2)
-
-    return result.model_dump()
+    return {"area": pi * r**2}
 
 
 if __name__ == '__main__':

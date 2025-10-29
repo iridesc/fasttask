@@ -1,6 +1,6 @@
 services:
   master:
-    image: fasttask:slim
+    image: irid/fasttask:test
     container_name: fasttask-master
     restart: always
 
@@ -9,14 +9,14 @@ services:
       - "9000:6379"
 
     volumes:
-      - ./files-master:/fasttask/files
+      - ./files:/fasttask/files
 
     environment:
       - NODE_TYPE=distributed_master
       - TASK_QUEUE_PASSWD=passwd
 
   worker-get_circle_area:
-    image: fasttask:slim
+    image: irid/fasttask:test
     container_name: fasttask-worker-get_circle_area
     restart: always
 
@@ -30,7 +30,7 @@ services:
       - TASK_QUEUE_PASSWD=passwd
 
   worker-get_hypotenuse:
-    image: fasttask:slim
+    image: irid/fasttask:test
     container_name: fasttask-worker-get_hypotenuse
     restart: always
 
