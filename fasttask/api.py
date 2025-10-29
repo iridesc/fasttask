@@ -73,7 +73,7 @@ app = FastAPI(
 
 if get_bool_env("API_STATUS_INFO"):
 
-    @app.get("/status_info")
+    @app.get("/status_info", tags=["Monitoring"])
     async def status_info(username: Annotated[str, Depends(get_current_username)]):
         worker_status, task_infos = await asyncio.gather(
             get_worker_status(celery_app), load_redis_task_infos(LOADED_TASKS)
@@ -101,7 +101,7 @@ if get_bool_env("API_STATUS_INFO"):
 
 if get_bool_env("API_FILE_DOWNLOAD"):
 
-    @app.get("/download")
+    @app.get("/download", tags=["File Management"])
     def download(file_name, username: Annotated[str, Depends(get_current_username)]):
         validated_file_path = check_file_name(file_name, username)
         if not os.path.isfile(validated_file_path):
@@ -113,7 +113,7 @@ if get_bool_env("API_FILE_DOWNLOAD"):
 
 if get_bool_env("API_FILE_UPLOAD"):
 
-    @app.post("/upload")
+    @app.post("/upload", tags=["File Management"])
     async def upload(
         file: UploadFile, username: Annotated[str, Depends(get_current_username)]
     ):
@@ -124,7 +124,7 @@ if get_bool_env("API_FILE_UPLOAD"):
 
 if get_bool_env("API_REVOKE"):
 
-    @app.post("/revoke", response_model=ActionResp)
+    @app.post("/revoke", response_model=ActionResp, tags=["Task Control"])
     def revoke(
         result_id_params: ResultIDParams,
         username: Annotated[str, Depends(get_current_username)],
@@ -168,6 +168,8 @@ if get_bool_env("API_REVOKE"):
 
 
 def get_task_apis(task_name):
+    task_base_tag = [f"Task: {task_name}"]
+
     task = getattr(
         import_module(package="loaded_tasks", name=f".{task_name}"), f"_{task_name}"
     )
@@ -183,7 +185,7 @@ def get_task_apis(task_name):
 
     if get_bool_env("API_RUN"):
 
-        @app.post(f"/run/{task_name}", response_model=ResultInfo)
+        @app.post(f"/run/{task_name}", response_model=ResultInfo, tags=task_base_tag)
         def run(
             params: Params, username: Annotated[str, Depends(get_current_username)]
         ):
@@ -198,7 +200,11 @@ def get_task_apis(task_name):
 
     if get_bool_env("API_CREATE"):
 
-        @app.post(f"/create/{task_name}", response_model=ResultInfo)
+        @app.post(
+            f"/create/{task_name}",
+            response_model=ResultInfo,
+            tags=task_base_tag,
+        )
         def create(
             params: Params, username: Annotated[str, Depends(get_current_username)]
         ):
@@ -220,7 +226,11 @@ def get_task_apis(task_name):
 
     if get_bool_env("API_CHECK"):
 
-        @app.get(f"/check/{task_name}", response_model=ResultInfo)
+        @app.get(
+            f"/check/{task_name}",
+            response_model=ResultInfo,
+            tags=task_base_tag,
+        )
         def check(
             result_id: str, username: Annotated[str, Depends(get_current_username)]
         ):
