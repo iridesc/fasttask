@@ -1,4 +1,3 @@
-from ast import List
 import contextlib
 import datetime
 import os
@@ -7,11 +6,8 @@ import uuid
 import traceback
 import asyncio
 from enum import Enum
-from typing import Any, Union, Annotated, Optional
+from typing import Any, Literal, Union, Annotated, Optional
 from importlib import import_module
-
-from redis.asyncio import Redis
-from celery.events.dumper import TASK_NAMES
 
 from utils.tools import get_list_env, get_bool_env
 from pydantic import BaseModel, Field
@@ -59,6 +55,17 @@ class ResultIDParams(BaseModel):
     result_id: str
 
 
+ALLOWED_STATUS_FIELDS = Literal[
+    "worker_status",
+    "task_info",
+    "pending_task_count",
+]
+
+
+class StatusInfoQueryParams(BaseModel):
+    fields: list[ALLOWED_STATUS_FIELDS] = []
+
+
 @contextlib.asynccontextmanager
 async def lifespan(app: FastAPI):
     print("Application startup: Initializing RUNNING_ID...")
@@ -79,31 +86,20 @@ app = FastAPI(
 
 if get_bool_env("API_STATUS_INFO"):
 
-    @app.get("/status_info", tags=["Monitoring"])
+    @app.post("/status_info", tags=["Monitoring"])
     async def status_info(
         username: Annotated[str, Depends(get_current_username)],
-        fields: Optional[List[str]] = None,
+        params: StatusInfoQueryParams,
     ):
-        fields = fields or []
-        allowed_fields = [
-            "worker_status",
-            "task_infos",
-            "pending_task_count",
-        ]
-        for field in fields:
-            if field not in []:
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"invalid {field=}, {allowed_fields=}",
-                )
-
         task_infos = (
             await load_redis_task_infos(LOADED_TASKS)
-            if "task_infos" in fields
+            if "task_infos" in params.fields
             else dict()
         ).values()
         worker_status = (
-            await get_worker_status(celery_app) if "worker_status" in fields else dict()
+            await get_worker_status(celery_app)
+            if "worker_status" in params.fields
+            else dict()
         )
 
         end_time = datetime.datetime.now(datetime.timezone.utc)
@@ -114,15 +110,21 @@ if get_bool_env("API_STATUS_INFO"):
             "worker_status": worker_status,
             "task_info_total": get_task_statistics_info(
                 end_time=end_time, task_infos=task_infos
-            ),
+            )
+            if "task_info" in params.fields
+            else dict(),
             "pending_task_count": await get_pending_task_count(task_names=LOADED_TASKS)
-            if "pending_task_count" in fields
+            if "pending_task_count" in params.fields
             else dict(),
         }
 
         for task_name in LOADED_TASKS:
-            status_info[f"task_info_{task_name}"] = get_task_statistics_info(
-                end_time=end_time, task_infos=task_infos, task_name=task_name
+            status_info[f"task_info_{task_name}"] = (
+                get_task_statistics_info(
+                    end_time=end_time, task_infos=task_infos, task_name=task_name
+                )
+                if "task_info" in params.fields
+                else dict()
             )
 
         return status_info
