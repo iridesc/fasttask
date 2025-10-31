@@ -5,7 +5,7 @@ task_file_template = """import sys
 from celery_app import app
 
 sys.path.append("tasks")
-from redis_lock import RedisConcurrencyController
+from utils.redis_lock import RedisConcurrencyController
 from tasks.{task_name} import {task_name}
 
 
