@@ -22,6 +22,7 @@ from utils.api_utils import (
     TaskState,
     check_file_name,
     get_current_username,
+    get_pending_task_count,
     get_task_statistics_info,
     get_worker_status,
     initialize_running_id,
@@ -81,9 +82,14 @@ if get_bool_env("API_STATUS_INFO"):
     @app.get("/status_info", tags=["Monitoring"])
     async def status_info(
         username: Annotated[str, Depends(get_current_username)],
-        fields: Optional[List[str]] = ["running_id", "username"],
+        fields: Optional[List[str]] = None,
     ):
-        allowed_fields = ["running_id", "username"]
+        fields = fields or []
+        allowed_fields = [
+            "worker_status",
+            "task_infos",
+            "pending_task_count",
+        ]
         for field in fields:
             if field not in []:
                 raise HTTPException(
@@ -95,43 +101,31 @@ if get_bool_env("API_STATUS_INFO"):
             await load_redis_task_infos(LOADED_TASKS)
             if "task_infos" in fields
             else dict()
+        ).values()
+        worker_status = (
+            await get_worker_status(celery_app) if "worker_status" in fields else dict()
         )
-        task_infos = task_infos.values()
 
         end_time = datetime.datetime.now(datetime.timezone.utc)
 
-        info = {
+        status_info = {
             "running_id": app.state.RUNNING_ID,
             "username": username,
-            "worker_status": await get_worker_status(celery_app)
-            if "worker_status" in fields
-            else dict(),
+            "worker_status": worker_status,
             "task_info_total": get_task_statistics_info(
                 end_time=end_time, task_infos=task_infos
             ),
+            "pending_task_count": await get_pending_task_count(task_names=LOADED_TASKS)
+            if "pending_task_count" in fields
+            else dict(),
         }
 
         for task_name in LOADED_TASKS:
-            info[f"task_info_{task_name}"] = get_task_statistics_info(
+            status_info[f"task_info_{task_name}"] = get_task_statistics_info(
                 end_time=end_time, task_infos=task_infos, task_name=task_name
             )
 
-        return info
-
-    @app.get("/pending_task_count")
-    def get_pending_task_count():
-        pending_counts = {}
-        async with await Redis(
-            db=1,
-            **redis_params,
-        ) as r:
-            for task_name in TASK_NAMES:
-                try:
-                    pending_counts[task_name] = int(await r.llen(task_name))
-                except Exception:
-                    # 单个队列统计失败不阻断整体，记录并置 0
-                    pending_counts[task_name] = 0
-        return pending_counts
+        return status_info
 
 
 if get_bool_env("API_FILE_DOWNLOAD"):
@@ -214,10 +208,10 @@ def get_task_apis(task_name):
     Params = try_import_Data(task_model, "Params")
 
     class ConcurrencyParams(BaseModel):
-        concurrency_key: str = Field(..., description='并发控制的key')
-        max_concurrency: int = Field(..., description='最大并发量')
-        countdown: int = Field(default=60, description='退避时间（秒）')
-        expire: int = Field(default=30 * 60, description='锁的过期时间（秒）避免死锁')
+        concurrency_key: str = Field(..., description="并发控制的key")
+        max_concurrency: int = Field(..., description="最大并发量")
+        countdown: int = Field(default=60, description="退避时间（秒）")
+        expire: int = Field(default=30 * 60, description="锁的过期时间（秒）避免死锁")
 
     class ResultInfo(BaseModel):
         id: str = ""
