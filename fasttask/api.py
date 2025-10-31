@@ -9,7 +9,8 @@ from enum import Enum
 from typing import Any, Union, Annotated, Optional
 from importlib import import_module
 
-import redis
+from redis.asyncio import Redis
+from celery.events.dumper import TASK_NAMES
 
 from utils.tools import get_list_env, get_bool_env
 from pydantic import BaseModel, Field
@@ -104,13 +105,13 @@ if get_bool_env("API_STATUS_INFO"):
     @app.get("/pending_task_count")
     def get_pending_task_count():
         pending_counts = {}
-        with redis.StrictRedis(
-                **redis_params,
+        async with await Redis(
                 db=1,
+                **redis_params,
         ) as r:
             for task_name in TASK_NAMES:
                 try:
-                    pending_counts[task_name] = int(r.llen(task_name))
+                    pending_counts[task_name] = int(await r.llen(task_name))
                 except Exception:
                     # 单个队列统计失败不阻断整体，记录并置 0
                     pending_counts[task_name] = 0
