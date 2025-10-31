@@ -1,3 +1,4 @@
+from ast import List
 import contextlib
 import datetime
 import os
@@ -26,7 +27,8 @@ from utils.api_utils import (
     initialize_running_id,
     load_redis_task_infos,
     try_import_Data,
-    upload_sync, redis_params,
+    upload_sync,
+    redis_params,
 )
 from setting import project_title, project_description, project_summary, project_version
 
@@ -77,18 +79,33 @@ app = FastAPI(
 if get_bool_env("API_STATUS_INFO"):
 
     @app.get("/status_info", tags=["Monitoring"])
-    async def status_info(username: Annotated[str, Depends(get_current_username)]):
-        worker_status, task_infos = await asyncio.gather(
-            get_worker_status(celery_app), load_redis_task_infos(LOADED_TASKS)
-        )
+    async def status_info(
+        username: Annotated[str, Depends(get_current_username)],
+        fields: Optional[List[str]] = ["running_id", "username"],
+    ):
+        allowed_fields = ["running_id", "username"]
+        for field in fields:
+            if field not in []:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"invalid {field=}, {allowed_fields=}",
+                )
 
+        task_infos = (
+            await load_redis_task_infos(LOADED_TASKS)
+            if "task_infos" in fields
+            else dict()
+        )
         task_infos = task_infos.values()
+
         end_time = datetime.datetime.now(datetime.timezone.utc)
 
         info = {
             "running_id": app.state.RUNNING_ID,
             "username": username,
-            "worker_status": worker_status,
+            "worker_status": await get_worker_status(celery_app)
+            if "worker_status" in fields
+            else dict(),
             "task_info_total": get_task_statistics_info(
                 end_time=end_time, task_infos=task_infos
             ),
@@ -101,13 +118,12 @@ if get_bool_env("API_STATUS_INFO"):
 
         return info
 
-
     @app.get("/pending_task_count")
     def get_pending_task_count():
         pending_counts = {}
         async with await Redis(
-                db=1,
-                **redis_params,
+            db=1,
+            **redis_params,
         ) as r:
             for task_name in TASK_NAMES:
                 try:
@@ -198,10 +214,10 @@ def get_task_apis(task_name):
     Params = try_import_Data(task_model, "Params")
 
     class ConcurrencyParams(BaseModel):
-        concurrency_key: str = Field(..., description='并发控制的key')
-        max_concurrency: int = Field(..., description='最大并发量')
+        concurrency_key: str = Field(..., description="并发控制的key")
+        max_concurrency: int = Field(..., description="最大并发量")
         # countdown: int = Field(default=60, description='退避时间（秒）')
-        expire: int = Field(default=30 * 60, description='锁的过期时间（秒）避免死锁')
+        expire: int = Field(default=30 * 60, description="锁的过期时间（秒）避免死锁")
 
     class ResultInfo(BaseModel):
         id: str = ""
@@ -231,7 +247,8 @@ def get_task_apis(task_name):
             tags=task_base_tag,
         )
         def create(
-            params: Params, username: Annotated[str, Depends(get_current_username)],
+            params: Params,
+            username: Annotated[str, Depends(get_current_username)],
             concurrency_params: Optional[ConcurrencyParams] = None,
         ):
             try:
