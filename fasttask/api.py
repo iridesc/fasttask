@@ -200,7 +200,7 @@ def get_task_apis(task_name):
     class ConcurrencyParams(BaseModel):
         concurrency_key: str = Field(..., description='并发控制的key')
         max_concurrency: int = Field(..., description='最大并发量')
-        # countdown: int = Field(default=60, description='退避时间（秒）')
+        countdown: int = Field(default=60, description='退避时间（秒）')
         expire: int = Field(default=30 * 60, description='锁的过期时间（秒）避免死锁')
 
     class ResultInfo(BaseModel):
@@ -236,7 +236,7 @@ def get_task_apis(task_name):
         ):
             try:
                 task_params = params.model_dump()
-                task_params["concurrency_params"] = concurrency_params
+                task_params["concurrency_params"] = concurrency_params.model_dump()
                 async_result = task.apply_async(
                     args=(),
                     kwargs=task_params,
