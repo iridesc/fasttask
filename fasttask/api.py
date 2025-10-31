@@ -6,11 +6,13 @@ import uuid
 import traceback
 import asyncio
 from enum import Enum
-from typing import Any, Union, Annotated
+from typing import Any, Union, Annotated, Optional
 from importlib import import_module
 
+import redis
+
 from utils.tools import get_list_env, get_bool_env
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from starlette.responses import FileResponse
 from fastapi import Depends, FastAPI, HTTPException, UploadFile
 from celery_app import app as celery_app
@@ -23,7 +25,7 @@ from utils.api_utils import (
     initialize_running_id,
     load_redis_task_infos,
     try_import_Data,
-    upload_sync,
+    upload_sync, redis_params,
 )
 from setting import project_title, project_description, project_summary, project_version
 
@@ -97,6 +99,22 @@ if get_bool_env("API_STATUS_INFO"):
             )
 
         return info
+
+
+    @app.get("/pending_task_count")
+    def get_pending_task_count():
+        pending_counts = {}
+        with redis.StrictRedis(
+                **redis_params,
+                db=1,
+        ) as r:
+            for task_name in TASK_NAMES:
+                try:
+                    pending_counts[task_name] = int(r.llen(task_name))
+                except Exception:
+                    # 单个队列统计失败不阻断整体，记录并置 0
+                    pending_counts[task_name] = 0
+        return pending_counts
 
 
 if get_bool_env("API_FILE_DOWNLOAD"):
@@ -178,6 +196,12 @@ def get_task_apis(task_name):
     Result = try_import_Data(task_model, "Result")
     Params = try_import_Data(task_model, "Params")
 
+    class ConcurrencyParams(BaseModel):
+        concurrency_key: str = Field(..., description='并发控制的key')
+        max_concurrency: int = Field(..., description='最大并发量')
+        # countdown: int = Field(default=60, description='退避时间（秒）')
+        expire: int = Field(default=30 * 60, description='锁的过期时间（秒）避免死锁')
+
     class ResultInfo(BaseModel):
         id: str = ""
         state: TaskState = TaskState.failure.value
@@ -206,12 +230,15 @@ def get_task_apis(task_name):
             tags=task_base_tag,
         )
         def create(
-            params: Params, username: Annotated[str, Depends(get_current_username)]
+            params: Params, username: Annotated[str, Depends(get_current_username)],
+            concurrency_params: Optional[ConcurrencyParams] = None,
         ):
             try:
+                task_params = params.model_dump()
+                task_params["concurrency_params"] = concurrency_params
                 async_result = task.apply_async(
                     args=(),
-                    kwargs=params.model_dump(),
+                    kwargs=task_params,
                     task_id=f"{app.state.RUNNING_ID}-{uuid.uuid4()}",
                     queue=task_name,
                 )

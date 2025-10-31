@@ -5,13 +5,28 @@ task_file_template = """import sys
 from celery_app import app
 
 sys.path.append("tasks")
-
+from redis_lock import RedisConcurrencyController
 from tasks.{task_name} import {task_name}
 
 
 @app.task( soft_time_limit={soft_time_limit}, time_limit={time_limit})
-def _{task_name}(*args, **kwargs):
-    return {task_name}(*args, **kwargs)
+def _{task_name}(self,*args, **kwargs):
+    concurrency_params = kwargs.get('concurrency_params')
+    if concurrency_params:
+        concurrency_key=concurrency_params['concurrency_key']
+        max_concurrency = concurrency_params['max_concurrency']
+        expire = concurrency_params['expire']
+        controller = RedisConcurrencyController(max_concurrent=max_concurrency, expire=expire)
+        if controller.acquire(concurrency_key):
+            try:
+                return {task_name}(*args, **kwargs)
+            finally:
+                controller.release(resource)
+        else:
+            countdown = concurrency_params['countdown']
+            raise self.retry(countdown=countdown)
+    else:
+        return {task_name}(*args, **kwargs)
 """
 
 
