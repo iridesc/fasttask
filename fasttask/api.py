@@ -236,7 +236,8 @@ def get_task_apis(task_name):
         ):
             try:
                 task_params = params.model_dump()
-                task_params["concurrency_params"] = concurrency_params.model_dump()
+                if concurrency_params:
+                    task_params["concurrency_params"] = concurrency_params.model_dump()
                 async_result = task.apply_async(
                     args=(),
                     kwargs=task_params,
