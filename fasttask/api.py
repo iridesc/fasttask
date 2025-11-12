@@ -6,11 +6,8 @@ import uuid
 import traceback
 import asyncio
 from enum import Enum
-from typing import Any, Union, Annotated, Optional
+from typing import Any, Literal, Union, Annotated, Optional
 from importlib import import_module
-
-from redis.asyncio import Redis
-from celery.events.dumper import TASK_NAMES
 
 from utils.tools import get_list_env, get_bool_env
 from pydantic import BaseModel, Field
@@ -21,12 +18,14 @@ from utils.api_utils import (
     TaskState,
     check_file_name,
     get_current_username,
+    get_pending_task_count,
     get_task_statistics_info,
     get_worker_status,
     initialize_running_id,
     load_redis_task_infos,
     try_import_Data,
-    upload_sync, redis_params,
+    upload_sync,
+    redis_params,
 )
 from setting import project_title, project_description, project_summary, project_version
 
@@ -56,6 +55,17 @@ class ResultIDParams(BaseModel):
     result_id: str
 
 
+ALLOWED_STATUS_FIELDS = Literal[
+    "worker_status",
+    "task_info",
+    "pending_task_count",
+]
+
+
+class StatusInfoQueryParams(BaseModel):
+    fields: list[ALLOWED_STATUS_FIELDS] = []
+
+
 @contextlib.asynccontextmanager
 async def lifespan(app: FastAPI):
     print("Application startup: Initializing RUNNING_ID...")
@@ -76,46 +86,48 @@ app = FastAPI(
 
 if get_bool_env("API_STATUS_INFO"):
 
-    @app.get("/status_info", tags=["Monitoring"])
-    async def status_info(username: Annotated[str, Depends(get_current_username)]):
-        worker_status, task_infos = await asyncio.gather(
-            get_worker_status(celery_app), load_redis_task_infos(LOADED_TASKS)
+    @app.post("/status_info", tags=["Monitoring"])
+    async def status_info(
+        username: Annotated[str, Depends(get_current_username)],
+        params: StatusInfoQueryParams,
+    ):
+        task_infos = (
+            await load_redis_task_infos(LOADED_TASKS)
+            if "task_infos" in params.fields
+            else dict()
+        ).values()
+        worker_status = (
+            await get_worker_status(celery_app)
+            if "worker_status" in params.fields
+            else dict()
         )
 
-        task_infos = task_infos.values()
         end_time = datetime.datetime.now(datetime.timezone.utc)
 
-        info = {
+        status_info = {
             "running_id": app.state.RUNNING_ID,
             "username": username,
             "worker_status": worker_status,
             "task_info_total": get_task_statistics_info(
                 end_time=end_time, task_infos=task_infos
-            ),
+            )
+            if "task_info" in params.fields
+            else dict(),
+            "pending_task_count": await get_pending_task_count(task_names=LOADED_TASKS)
+            if "pending_task_count" in params.fields
+            else dict(),
         }
 
         for task_name in LOADED_TASKS:
-            info[f"task_info_{task_name}"] = get_task_statistics_info(
-                end_time=end_time, task_infos=task_infos, task_name=task_name
+            status_info[f"task_info_{task_name}"] = (
+                get_task_statistics_info(
+                    end_time=end_time, task_infos=task_infos, task_name=task_name
+                )
+                if "task_info" in params.fields
+                else dict()
             )
 
-        return info
-
-
-    @app.get("/pending_task_count")
-    def get_pending_task_count():
-        pending_counts = {}
-        async with await Redis(
-                db=1,
-                **redis_params,
-        ) as r:
-            for task_name in TASK_NAMES:
-                try:
-                    pending_counts[task_name] = int(await r.llen(task_name))
-                except Exception:
-                    # 单个队列统计失败不阻断整体，记录并置 0
-                    pending_counts[task_name] = 0
-        return pending_counts
+        return status_info
 
 
 if get_bool_env("API_FILE_DOWNLOAD"):
@@ -198,10 +210,10 @@ def get_task_apis(task_name):
     Params = try_import_Data(task_model, "Params")
 
     class ConcurrencyParams(BaseModel):
-        concurrency_key: str = Field(..., description='并发控制的key')
-        max_concurrency: int = Field(..., description='最大并发量')
-        countdown: int = Field(default=60, description='退避时间（秒）')
-        expire: int = Field(default=30 * 60, description='锁的过期时间（秒）避免死锁')
+        concurrency_key: str = Field(..., description="并发控制的key")
+        max_concurrency: int = Field(..., description="最大并发量")
+        countdown: int = Field(default=60, description="退避时间（秒）")
+        expire: int = Field(default=30 * 60, description="锁的过期时间（秒）避免死锁")
 
     class ResultInfo(BaseModel):
         id: str = ""
@@ -231,7 +243,8 @@ def get_task_apis(task_name):
             tags=task_base_tag,
         )
         def create(
-            params: Params, username: Annotated[str, Depends(get_current_username)],
+            params: Params,
+            username: Annotated[str, Depends(get_current_username)],
             concurrency_params: Optional[ConcurrencyParams] = None,
         ):
             try:
