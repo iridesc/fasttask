@@ -10,7 +10,7 @@ from tasks.{task_name} import {task_name}
 
 
 @app.task( soft_time_limit={soft_time_limit}, time_limit={time_limit})
-def _{task_name}(self,*args, **kwargs):
+def _{task_name}(*args, **kwargs):
     concurrency_params = kwargs.get('concurrency_params')
     if concurrency_params:
         concurrency_key=concurrency_params['concurrency_key']
