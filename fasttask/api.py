@@ -13,6 +13,7 @@ from utils.tools import get_list_env, get_bool_env
 from pydantic import BaseModel
 from starlette.responses import FileResponse
 from fastapi import Depends, FastAPI, HTTPException, UploadFile
+from fastapi.openapi.docs import get_swagger_ui_html
 from celery_app import app as celery_app
 from utils.api_utils import (
     TaskState,
@@ -65,10 +66,20 @@ app = FastAPI(
     description=project_description,
     summary=project_summary,
     version=project_version,
-    docs_url="/docs" if get_bool_env("API_DOCS") else None,
-    redoc_url="/redoc" if get_bool_env("API_REDOC") else None,
+    docs_url=None,
     lifespan=lifespan,
 )
+
+
+if get_bool_env("API_DOCS"):
+
+    @app.get("/docs", include_in_schema=False)
+    async def custom_swagger_ui_html(
+        username: Annotated[str, Depends(get_current_username)],
+    ):
+        return get_swagger_ui_html(
+            openapi_url=app.openapi_url, title=app.title
+        )
 
 
 if get_bool_env("API_STATUS_INFO"):

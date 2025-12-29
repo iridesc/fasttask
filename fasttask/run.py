@@ -184,6 +184,12 @@ env_type_to_envs = {
             init_func=init_dir,
             is_print_env=False,
         ),
+        Env(
+            "LAZY_ACTION_FILE_PATH",
+            "/fasttask/files/",
+            force_default=True,
+            is_print_env=False,
+        ),
         Env("WORKER_POOL", "prefork"),
         Env("WORKER_CONCURRENCY", os.cpu_count()),
     ],
@@ -195,7 +201,6 @@ env_type_to_envs = {
         # master default
         Env("UVICORN_WORKERS", 1),
         Env("API_DOCS", "True"),
-        Env("API_REDOC", "True"),
         Env("API_STATUS_INFO", "True"),
         Env("API_RUN", "True"),
         Env("API_CREATE", "True"),
@@ -210,7 +215,6 @@ env_type_to_envs = {
         Env("TASK_QUEUE_PASSWD"),
         Env("UVICORN_WORKERS", 1),
         Env("API_DOCS", "True"),
-        Env("API_REDOC", "True"),
         Env("API_STATUS_INFO", "True"),
         Env("API_RUN", "True"),
         Env("API_CREATE", "True"),
