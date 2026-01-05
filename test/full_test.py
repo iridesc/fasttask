@@ -3,10 +3,7 @@ import os
 import time
 from fasttask_manager.manager import Manager
 from requests import HTTPError
-import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from fasttask_manager.manager import Manager
-from requests import HTTPError
 from logging import getLogger
 
 logger = getLogger(__name__)
@@ -120,12 +117,12 @@ def create_auth_file():
             f,
             indent=2,
         )
-    print(f"auth file created")
+    print("auth file created")
 
 
 def test_auth():
     create_auth_file()
-    print(f"auth file created,")
+    print("auth file created,")
     wait(60)
     test_all_api(manager, expect_access=False)
     print("pass. prohibited unauthorized requests")
@@ -252,7 +249,7 @@ def is_ready(): ...
 if __name__ == "__main__":
     for compose in [
         "samples/docker-compose-single_node.yml",
-        "samples/docker-compose-distributed.yml",
+        "samples/docker-compose-distributed.yml", 
         "samples/docker-compose-desktop-single_node.yml",
         "samples/docker-compose-desktop-distributed.yml",
     ]:
@@ -261,14 +258,14 @@ if __name__ == "__main__":
         print("-" * 20)
         print()
 
-        os.system(f"docker compose -f '{compose}' up -d")
+        os.system(f"podman-compose -f '{compose}' up -d")
         wait(10)
 
         test_auth()
         test_all_api(manager)
         test_concurrency_metadata_performance(manager)
 
-        os.system(f"docker compose -f '{compose}' down")
+        os.system(f"podman-compose -f '{compose}' down")
 
         print("-" * 20)
         print(f"all passed! {compose=}")
