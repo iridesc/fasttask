@@ -25,8 +25,8 @@ services:
 
     environment:
       - NODE_TYPE=distributed_worker
-      - MASTER_HOST=10.65.8.8
-      - TASK_QUEUE_PORT=9000
+      - MASTER_HOST=master
+      - TASK_QUEUE_PORT=6379
       - TASK_QUEUE_PASSWD=passwd
 
   worker-get_hypotenuse:
@@ -40,6 +40,6 @@ services:
     environment:
 
       - NODE_TYPE=distributed_worker
-      - MASTER_HOST=10.65.8.8
-      - TASK_QUEUE_PORT=9000
+      - MASTER_HOST=master
+      - TASK_QUEUE_PORT=6379
       - TASK_QUEUE_PASSWD=passwd
