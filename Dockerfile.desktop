@@ -1,4 +1,4 @@
-FROM linuxserver/webtop:debian-xfce
+FROM docker.io/linuxserver/webtop:debian-xfce
 
 ENV PYTHONDONTWRITEBYTECODE=1
 RUN apt update && apt install -y nano redis-server python3 python3-pip && ln -s /usr/bin/python3 /usr/bin/python && \
