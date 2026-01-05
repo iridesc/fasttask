@@ -1,6 +1,6 @@
 services:
   fasttask-desktop-master:
-    image: irid/fasttask:desktop-test
+    image: docker.io/irid/fasttask:desktop-test
     container_name: fasttask-desktop-master
     restart: always
 
@@ -30,7 +30,7 @@ services:
 
 
   fasttask-desktop-worker-get_circle_area:
-    image: irid/fasttask:desktop-test
+    image: docker.io/irid/fasttask:desktop-test
     container_name: fasttask-desktop-worker-get_circle_area
     restart: always
 
@@ -58,7 +58,7 @@ services:
       - PASSWORD=passwd
 
   fasttask-desktop-worker-get_hypotenuse:
-    image: irid/fasttask:desktop-test
+    image: docker.io/irid/fasttask:desktop-test
     container_name: fasttask-desktop-worker-get_hypotenuse
     restart: always
 

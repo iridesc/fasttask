@@ -1,6 +1,6 @@
 services:
   fasttask:
-    image: irid/fasttask:desktop-test
+    image: docker.io/irid/fasttask:desktop-test
     container_name: fasttask-desktop
     restart: always
 
