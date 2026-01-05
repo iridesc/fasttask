@@ -1,6 +1,6 @@
 services:
   fasttask:
-    image: irid/fasttask:test
+    image: docker.io/irid/fasttask:latest
     container_name: fasttask
     restart: always
 
