@@ -58,6 +58,12 @@ app.conf.update(
             "socket_connect_timeout": 5,
             "socket_timeout": 60,
             "health_check_interval": 60,
+            "retry_policy": {
+                "max_retries": 10,
+                "interval_start": 0.2,
+                "interval_step": 0.5,
+                "interval_max": 6.0,
+            },
         },
     }
 )
