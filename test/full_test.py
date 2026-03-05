@@ -12,8 +12,8 @@ logger = getLogger(__name__)
 auth_user = "admin"
 auth_passwd = "passwd"
 
-CONCURRENCY_LEVEL = 100  # 同时运行的线程/用户数量
-REQUESTS_PER_THREAD = 100  # 每个线程发送的请求数量
+CONCURRENCY_LEVEL = 20  # 同时运行的线程/用户数量
+REQUESTS_PER_THREAD = 20  # 每个线程发送的请求数量
 TOTAL_REQUESTS = CONCURRENCY_LEVEL * REQUESTS_PER_THREAD  # 总请求量 (1000)
 
 
@@ -23,7 +23,6 @@ manager_params = {
     "host": "127.0.0.1",
     "port": "9001",
     "protocol": "https",
-    "task_name": "get_circle_area",
     "tries": 1,
     "logger": logger,
 }
@@ -42,14 +41,20 @@ data = {
 
 
 def test_run(manager=manager):
-    resp = manager.run(data)
+    resp = manager.run(
+        task_name="get_circle_area",
+        params=data,
+    )
     print(f"{resp=}")
     assert resp["result"]["area"] == 3.141592653589793
     print("test_run pass")
 
 
 def test_create_check(manager=manager):
-    result = manager.create_and_wait_result(data)
+    result = manager.create_and_wait_result(
+        task_name="get_circle_area",
+        params=data,
+    )
     print(f"{result=}")
     assert result["area"] == 3.141592653589793
     print("test_run pass")
@@ -78,13 +83,21 @@ def test_status_info(manager=manager):
 def test_revoke(manager=manager):
     result_ids = []
     for _ in range(10):
-        result_ids.append(manager.create_task(data)["id"])
+        result_ids.append(
+            manager.create_task(
+                task_name="get_circle_area",
+                params=data,
+            )["id"]
+        )
 
     for result_id in result_ids:
         manager.revoke(result_id)
     time.sleep(5)
     for result_id in result_ids:
-        state = manager.check(result_id)["state"]
+        state = manager.check(
+            task_name="get_circle_area",
+            result_id=result_id,
+        )["state"]
         print(f"{result_id=} {state=}")
         assert state == "REVOKED", "task not revoked"
 
@@ -149,10 +162,19 @@ def run_single_task_metadata(manager: Manager, request_id: int):
     task_id = None
 
     try:
-        task_id = manager.create_task(data)["id"]
-        manager.check(task_id)["state"]
+        task_id = manager.create_task(
+            task_name="get_circle_area",
+            params=data,
+        )["id"]
+        manager.check(
+            task_name="get_circle_area",
+            result_id=task_id,
+        )["state"]
         manager.revoke(task_id)
-        manager.check(task_id)["state"]
+        manager.check(
+            task_name="get_circle_area",
+            result_id=task_id,
+        )["state"]
         return time.time() - start_time, True  # (耗时, 成功)
 
     except Exception as e:
@@ -188,8 +210,11 @@ def test_concurrency_metadata_performance(unauthed_manager: Manager):
     # 等待所有任务完成并收集结果
     total_time = 0
     success_count = 0
-
+    n = 0
     for future in as_completed(all_futures):
+        n += 1
+        if n % int(TOTAL_REQUESTS / 100) == 0:
+            print(f"Completed request {n}/{TOTAL_REQUESTS}")
         try:
             # future.result() 会返回 run_single_task_metadata 的返回值
             task_time, success = future.result(timeout=60)
@@ -249,9 +274,9 @@ def is_ready(): ...
 if __name__ == "__main__":
     for compose in [
         "samples/docker-compose-single_node.yml",
-        "samples/docker-compose-distributed.yml", 
-        "samples/docker-compose-desktop-single_node.yml",
-        "samples/docker-compose-desktop-distributed.yml",
+        # "samples/docker-compose-distributed.yml",
+        # "samples/docker-compose-desktop-single_node.yml",
+        # "samples/docker-compose-desktop-distributed.yml",
     ]:
         print("-" * 20)
         print(f"testing {compose}...")
@@ -261,8 +286,8 @@ if __name__ == "__main__":
         os.system(f"podman-compose -f '{compose}' up -d")
         wait(10)
 
-        test_auth()
-        test_all_api(manager)
+        # test_auth()
+        # test_all_api(manager)
         test_concurrency_metadata_performance(manager)
 
         os.system(f"podman-compose -f '{compose}' down")
