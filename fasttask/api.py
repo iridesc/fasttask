@@ -1,5 +1,6 @@
 import contextlib
 import datetime
+import json
 import os
 import sys
 import uuid
@@ -14,6 +15,9 @@ from pydantic import BaseModel
 from starlette.responses import FileResponse
 from fastapi import Depends, FastAPI, HTTPException, UploadFile
 from fastapi.openapi.docs import get_swagger_ui_html
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.requests import Request
+from starlette.responses import Response
 from celery_app import app as celery_app
 from utils.api_utils import (
     TaskState,
@@ -71,15 +75,78 @@ app = FastAPI(
 )
 
 
+def truncate_body(body: bytes, max_len: int = 200) -> str:
+    try:
+        text = body.decode("utf-8", errors="replace")
+    except:
+        text = body.decode("latin-1", errors="replace")
+
+    if len(text) > max_len:
+        return f"{text[:max_len]}... [truncated]"
+    return text
+
+
+class LoggingMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        print(f"\n{'=' * 50}")
+        print(f"📥 Request: {request.method} {request.url}")
+        print(f"   Headers: {dict(request.headers)}")
+
+        body = await request.body()
+        if body:
+            content_type = request.headers.get("content-type", "")
+            if "application/json" in content_type:
+                try:
+                    print(f"   Body: {json.loads(body)}")
+                except:
+                    print(f"   Body: {truncate_body(body)}")
+            else:
+                print(f"   Body: {truncate_body(body)}")
+
+        async def receive():
+            return {"type": "http.request", "body": body}
+
+        request._receive = receive
+
+        response = await call_next(request)
+
+        response_body = b""
+        async for chunk in response.body_iterator:
+            response_body += chunk
+
+        print(f"📤 Response: {response.status_code}")
+        print(f"   Headers: {dict(response.headers)}")
+
+        content_type = response.headers.get("content-type", "")
+        if "application/json" in content_type:
+            try:
+                print(f"   Body: {json.loads(response_body)}")
+            except:
+                print(f"   Body: {truncate_body(response_body)}")
+        else:
+            print(f"   Body: {truncate_body(response_body)}")
+
+        print(f"{'=' * 50}\n")
+
+        return Response(
+            content=response_body,
+            status_code=response.status_code,
+            headers=dict(response.headers),
+            media_type=response.media_type,
+        )
+
+
+if get_bool_env("DEBUG"):
+    app.add_middleware(LoggingMiddleware)
+
+
 if get_bool_env("API_DOCS"):
 
     @app.get("/docs", include_in_schema=False)
     async def custom_swagger_ui_html(
         username: Annotated[str, Depends(get_current_username)],
     ):
-        return get_swagger_ui_html(
-            openapi_url=app.openapi_url, title=app.title
-        )
+        return get_swagger_ui_html(openapi_url=app.openapi_url, title=app.title)
 
 
 if get_bool_env("API_STATUS_INFO"):
