@@ -184,7 +184,6 @@ def try_import_Data(task_model, DataName) -> type:
         return Any
 
 
-@lazy_action(expire=10, mode="memory")
 async def load_redis_task_infos(task_names) -> dict:
     task_id_to_infos = dict()
 
