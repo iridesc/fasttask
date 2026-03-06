@@ -274,9 +274,9 @@ def is_ready(): ...
 if __name__ == "__main__":
     for compose in [
         "samples/docker-compose-single_node.yml",
-        # "samples/docker-compose-distributed.yml",
-        # "samples/docker-compose-desktop-single_node.yml",
-        # "samples/docker-compose-desktop-distributed.yml",
+        "samples/docker-compose-distributed.yml",
+        "samples/docker-compose-desktop-single_node.yml",
+        "samples/docker-compose-desktop-distributed.yml",
     ]:
         print("-" * 20)
         print(f"testing {compose}...")
@@ -286,8 +286,8 @@ if __name__ == "__main__":
         os.system(f"podman-compose -f '{compose}' up -d")
         wait(10)
 
-        # test_auth()
-        # test_all_api(manager)
+        test_auth()
+        test_all_api(manager)
         test_concurrency_metadata_performance(manager)
 
         os.system(f"podman-compose -f '{compose}' down")
