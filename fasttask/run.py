@@ -192,6 +192,7 @@ env_type_to_envs = {
         ),
         Env("WORKER_POOL", "prefork"),
         Env("WORKER_CONCURRENCY", os.cpu_count()),
+        Env("DEBUG", "False"),
     ],
     "single_node": [
         # com default
