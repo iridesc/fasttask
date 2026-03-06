@@ -320,14 +320,20 @@ def get_task_apis(task_name):
                 )
 
             async_result = celery_app.AsyncResult(result_id)
-            if async_result.state == TaskState.success.value:
-                result = Result(**async_result.result)
-            elif async_result.state == TaskState.failure.value:
-                result = str(async_result.traceback)
-            else:
-                result = str(async_result.result)
 
-            return ResultInfo(id=result_id, state=async_result.state, result=result)
+            # 立即获取 状态以及数据 尽量避免不一致的情况
+            state = async_result.state
+            traceback = async_result.traceback
+            result = async_result.result
+
+            if state == TaskState.success.value:
+                result = Result(**result)
+            elif state == TaskState.failure.value:
+                result = str(traceback)
+            else:
+                result = str(result)
+
+            return ResultInfo(id=result_id, state=state, result=result)
 
 
 for task_name in LOADED_TASKS:
