@@ -236,7 +236,8 @@ def _get_worker_status(celery_app) -> dict:
         }
 
     inspector = celery_app.control.inspect()
-    online_worker_names = list(inspector.ping().keys())
+    ping_result = inspector.ping()
+    online_worker_names = [] if ping_result is None else list(ping_result.keys())
     return {
         "online_worker_count": len(online_worker_names),
         "online_workers_list": online_worker_names,
