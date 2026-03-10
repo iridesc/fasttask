@@ -269,3 +269,14 @@ def upload_sync(file: UploadFile, username):
         for i in iter(lambda: file.file.read(1024 * 1024 * 10), b""):
             f.write(i)
     return file_name
+
+
+async def get_pending_task_count(task_names):
+    async with await Redis(
+        db=1,
+        **redis_params,
+    ) as r:
+        pipe = r.pipeline()
+        for task_name in task_names:
+            pipe.llen(task_name)
+    return dict(zip(task_names, await pipe.execute()))

@@ -1,0 +1,106 @@
+services:
+  fasttask-desktop-master:
+    image: irid/fasttask:desktop-test
+    container_name: fasttask-desktop-master
+    restart: always
+
+    security_opt:
+      - seccomp:unconfined
+
+    ports:
+      # 在single_node 与 distributed_master 需要映射api端口 
+      - "9001:443"
+      # 在distributed_master需要映射任务队列端口
+      - "9000:6379"
+      # webtop  related
+      - 3000:3001
+
+    volumes:
+       - ./files:/fasttask/files
+
+    environment:
+      - NODE_TYPE=distributed_master
+      - TASK_QUEUE_PASSWD=passwd
+
+      # webtop  related
+      - PUID=1000
+      - PGID=1000
+      - TITLE=fasttask-desktop
+      - PASSWORD=webtop_passwd
+
+
+  fasttask-desktop-worker-get_circle_area:
+    image: irid/fasttask:desktop-test
+    container_name: fasttask-desktop-worker-get_circle_area
+    restart: always
+
+    security_opt:
+      - seccomp:unconfined
+
+    ports:
+      # webtop  related
+      - 3001:3001
+
+    volumes:
+      - ./files-worker_1:/fasttask/files
+
+ 
+    environment:
+      - NODE_TYPE=distributed_worker
+      - MASTER_HOST=10.65.8.8
+      - TASK_QUEUE_PORT=9000
+      - TASK_QUEUE_PASSWD=passwd
+
+      # webtop  related
+      - PUID=1000
+      - PGID=1000
+      - TITLE=fasttask-desktop-worker
+      - PASSWORD=passwd
+
+  fasttask-desktop-worker-get_hypotenuse:
+    image: irid/fasttask:desktop-test
+    container_name: fasttask-desktop-worker-get_hypotenuse
+    restart: always
+
+
+    security_opt:
+      - seccomp:unconfined
+
+    ports:
+      # webtop  related
+      - 3002:3001
+
+    volumes:
+      - ./files-worker_2:/fasttask/files
+
+    environment:
+      - NODE_TYPE=distributed_worker
+      - MASTER_HOST=10.65.8.8
+      - TASK_QUEUE_PORT=9000
+      - TASK_QUEUE_PASSWD=passwd
+
+      # webtop  related
+      - PUID=1000
+      - PGID=1000
+      - TITLE=fasttask-desktop-worker
+      - PASSWORD=passwd
+
+  vsftpd:
+    image: fauria/vsftpd:latest
+    container_name: vsftpd
+    restart: unless-stopped
+    ports:
+      - "21:21"                     # 控制连接
+      - "21100-21110:21100-21110"   # 被动模式端口段（按需扩大）
+    environment:
+      - FTP_USER=demo               # 登录用户名（示例）
+      - FTP_PASS=demo123            # 登录密码（示例）
+      - PASV_ENABLE=YES
+      - PASV_MIN_PORT=21100
+      - PASV_MAX_PORT=21110
+      - PASV_ADDRESS=your.public.ip.or.hostname  # 改成你的公网IP或域名
+      - LOG_STDOUT=YES              # 日志输出到 docker logs
+    volumes:
+      - ./files:/home/vsftpd        # 挂载的数据目录（容器内各用户家目录）
+      - ./logs:/var/log/vsftpd     # 挂载日志目录
+  
