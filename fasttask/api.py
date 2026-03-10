@@ -71,6 +71,19 @@ class StatusInfoQueryParams(BaseModel):
     fields: list[ALLOWED_STATUS_FIELDS] = []
 
 
+class ConcurrencyParams(BaseModel):
+    concurrency_key: str = Field(..., description="并发控制的key")
+    max_concurrency: int = Field(default=16, gt=0, description="最大并发量")
+    countdown: int = Field(default=60, description="退避时间（秒）")
+    expire: int = Field(default=30 * 60, description="锁的过期时间（秒）避免死锁")
+
+
+class BaseConcurrencyParams(BaseModel):
+    fasttask_concurrency_params: Optional[ConcurrencyParams] = Field(
+        None, description="并发参数"
+    )
+
+
 @contextlib.asynccontextmanager
 async def lifespan(app: FastAPI):
     print("Application startup: Initializing RUNNING_ID...")
@@ -287,11 +300,8 @@ def get_task_apis(task_name):
     Result = try_import_Data(task_model, "Result")
     Params = try_import_Data(task_model, "Params")
 
-    class ConcurrencyParams(BaseModel):
-        concurrency_key: str = Field(..., description="并发控制的key")
-        max_concurrency: int = Field(..., description="最大并发量")
-        countdown: int = Field(default=60, description="退避时间（秒）")
-        expire: int = Field(default=30 * 60, description="锁的过期时间（秒）避免死锁")
+    class FullParams(BaseConcurrencyParams, Params):
+        pass
 
     class ResultInfo(BaseModel):
         id: str = ""
@@ -302,8 +312,9 @@ def get_task_apis(task_name):
 
         @app.post(f"/run/{task_name}", response_model=ResultInfo, tags=task_base_tag)
         def run(
-            params: Params, username: Annotated[str, Depends(get_current_username)]
+            params: FullParams, username: Annotated[str, Depends(get_current_username)]
         ):
+
             try:
                 result = Result(**task(**params.model_dump()))
                 state = TaskState.success.value
@@ -321,17 +332,14 @@ def get_task_apis(task_name):
             tags=task_base_tag,
         )
         def create(
-            params: Params,
+            params: FullParams,
             username: Annotated[str, Depends(get_current_username)],
-            concurrency_params: Optional[ConcurrencyParams] = None,
         ):
+
             try:
-                task_params = params.model_dump()
-                if concurrency_params:
-                    task_params["concurrency_params"] = concurrency_params.model_dump()
                 async_result = task.apply_async(
                     args=(),
-                    kwargs=task_params,
+                    kwargs=params.model_dump(),
                     task_id=f"{app.state.RUNNING_ID}-{uuid.uuid4()}",
                     queue=task_name,
                 )
