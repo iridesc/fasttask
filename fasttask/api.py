@@ -379,7 +379,7 @@ def get_task_apis(task_name):
             if state == TaskState.success.value:
                 result = Result(**result)
             elif state == TaskState.failure.value:
-                result = str(traceback)
+                result = f"{result=} {traceback=}"
             else:
                 result = str(result)
 
