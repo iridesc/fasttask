@@ -59,12 +59,20 @@ app.conf.update(
             # Redis 读写操作超时及空闲连接清理超时 (秒)
             "socket_timeout": 60,
             # Redis 连接健康检查间隔 (秒)
-            "health_check_interval": 60,
+            "health_check_interval": 20,  # 缩短检查间隔，必须小于公网网关的回收时间（通常是 30-60s）
+            "socket_keepalive": True,  # 开启底层 TCP Keepalive
+            "retry_on_timeout": True,  # 读写超时后不报错，而是直接重试
+            "socket_keepalive_options": {
+                "tcp_keepidle": 20,  # 20秒没活动就开始探测
+                "tcp_keepintvl": 10,  # 探测间隔
+                "tcp_keepcnt": 5,  # 探测失败5次才彻底放弃
+            },
         },
         "result_backend_transport_options": {
             "socket_connect_timeout": 5,
             "socket_timeout": 60,
-            "health_check_interval": 60,
+            "health_check_interval": 20,
+            "socket_keepalive": True,
             "retry_policy": {
                 "max_retries": 10,
                 "interval_start": 0.2,
