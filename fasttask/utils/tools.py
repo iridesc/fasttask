@@ -69,7 +69,7 @@ def load_tasks(
     loaded_tasks = list()
     os.mkdir(to_folder)
     for task_name in load_task_names(
-        from_folder, get_list_env("ENABLED_TASKS"), get_list_env("ENABLED_TASKS")
+        from_folder, get_list_env("ENABLED_TASKS"), get_list_env("DISABLED_TASKS")
     ):
         with open(os.path.join(to_folder, f"{task_name}.py"), "w") as f:
             f.write(
