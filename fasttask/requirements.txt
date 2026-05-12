@@ -7,3 +7,5 @@ python-multipart
 retry
 lazy-action
 portalocker
+flower
+httpx

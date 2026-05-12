@@ -3,15 +3,20 @@ import os
 import json
 import datetime
 import uuid
+import base64
+import secrets
+import string
 from lazy_action.lazy_action import lazy_action
 from fastapi import HTTPException, status
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from fastapi import Depends, HTTPException, status, UploadFile
 from typing import Any, Annotated
-import secrets
-import string
 from redis.asyncio import Redis
 import asyncio
+import httpx
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.requests import Request
+from starlette.responses import Response
 
 
 CONF_DIR = os.environ["CONF_DIR"]
@@ -280,3 +285,162 @@ async def get_pending_task_count(task_names):
         for task_name in task_names:
             pipe.llen(task_name)
     return dict(zip(task_names, await pipe.execute()))
+
+
+def truncate_body(body: bytes, max_len: int = 200) -> str:
+    try:
+        text = body.decode("utf-8", errors="replace")
+    except:
+        text = body.decode("latin-1", errors="replace")
+
+    if len(text) > max_len:
+        return f"{text[:max_len]}... [truncated]"
+    return text
+
+
+class FlowerProxyMiddleware(BaseHTTPMiddleware):
+    """处理 /flower 路径的认证和代理"""
+
+    async def dispatch(self, request: Request, call_next):
+        # 只处理 /flower 路径
+        if not request.url.path.startswith("/flower"):
+            return await call_next(request)
+
+        # 检查认证
+        user_to_passwd = load_user_to_passwd()
+
+        # 如果配置了认证文件，需要验证
+        if user_to_passwd:
+            auth_header = request.headers.get("Authorization", "")
+            if not auth_header.startswith("Basic "):
+                return Response(
+                    content=json.dumps({"detail": "Not authenticated"}),
+                    status_code=401,
+                    headers={"WWW-Authenticate": "Basic"},
+                    media_type="application/json",
+                )
+
+            try:
+                decoded = base64.b64decode(auth_header[6:]).decode("utf-8")
+                username, password = decoded.split(":", 1)
+            except Exception:
+                return Response(
+                    content=json.dumps({"detail": "Invalid authentication"}),
+                    status_code=401,
+                    headers={"WWW-Authenticate": "Basic"},
+                    media_type="application/json",
+                )
+
+            # 验证用户名密码
+            if not (
+                username in user_to_passwd
+                and secrets.compare_digest(
+                    password.encode("utf8"),
+                    user_to_passwd[username].encode("utf8"),
+                )
+            ):
+                return Response(
+                    content=json.dumps({"detail": "Invalid credentials"}),
+                    status_code=401,
+                    headers={"WWW-Authenticate": "Basic"},
+                    media_type="application/json",
+                )
+
+        # 认证通过，代理请求到 Flower
+        path = request.url.path
+        # Flower 需要尾部斜杠，如果访问 /flower 则添加
+        if path == "/flower":
+            path = "/flower/"
+
+        # 构造完整 URL，包含查询参数
+        query = request.url.query
+        flower_url = f"http://localhost:{os.environ['FLOWER_PORT']}{path}"
+        if query:
+            flower_url = f"{flower_url}?{query}"
+
+        # 构造代理请求
+        headers = dict(request.headers)
+        headers.pop("host", None)
+
+        # 获取请求体
+        body = await request.body()
+
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            try:
+                # 发送代理请求
+                proxy_response = await client.request(
+                    method=request.method,
+                    url=flower_url,
+                    headers=headers,
+                    content=body,
+                    follow_redirects=False,
+                )
+
+                # 构造响应
+                response_headers = dict(proxy_response.headers)
+                response_headers.pop("content-encoding", None)
+                response_headers.pop("content-length", None)
+                response_headers.pop("transfer-encoding", None)
+
+                return Response(
+                    content=proxy_response.content,
+                    status_code=proxy_response.status_code,
+                    headers=response_headers,
+                    media_type=proxy_response.headers.get("content-type"),
+                )
+            except httpx.RequestError as e:
+                return Response(
+                    content=json.dumps({"detail": f"Flower service error: {str(e)}"}),
+                    status_code=503,
+                    media_type="application/json",
+                )
+
+
+class LoggingMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        print(f"\n{'=' * 50}")
+        print(f"📥 Request: {request.method} {request.url}")
+        print(f"   Headers: {dict(request.headers)}")
+
+        body = await request.body()
+        if body:
+            content_type = request.headers.get("content-type", "")
+            if "application/json" in content_type:
+                try:
+                    print(f"   Body: {json.loads(body)}")
+                except:
+                    print(f"   Body: {truncate_body(body)}")
+            else:
+                print(f"   Body: {truncate_body(body)}")
+
+        async def receive():
+            return {"type": "http.request", "body": body}
+
+        request._receive = receive
+
+        response = await call_next(request)
+
+        response_body = b""
+        async for chunk in response.body_iterator:
+            response_body += chunk
+
+        print(f"📤 Response: {response.status_code}")
+        print(f"   Headers: {dict(response.headers)}")
+
+        content_type = response.headers.get("content-type", "")
+        if "application/json" in content_type:
+            try:
+                print(f"   Body: {json.loads(response_body)}")
+            except:
+                print(f"   Body: {truncate_body(response_body)}")
+        else:
+            print(f"   Body: {truncate_body(response_body)}")
+
+        print(f"{'=' * 50}\n")
+
+        return Response(
+            content=response_body,
+            status_code=response.status_code,
+            headers=dict(response.headers),
+            media_type=response.media_type,
+        )

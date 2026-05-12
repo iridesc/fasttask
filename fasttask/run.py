@@ -209,6 +209,8 @@ env_type_to_envs = {
         Env("API_REVOKE", "True"),
         Env("API_FILE_DOWNLOAD", "True"),
         Env("API_FILE_UPLOAD", "True"),
+        Env("FLOWER_ENABLED", "True"),
+        Env("FLOWER_PORT", "5555", force_default=True),
     ],
     "distributed_master": [
         Env("MASTER_HOST", "0.0.0.0", force_default=True),
@@ -223,6 +225,8 @@ env_type_to_envs = {
         Env("API_REVOKE", "True"),
         Env("API_FILE_DOWNLOAD", "True"),
         Env("API_FILE_UPLOAD", "True"),
+        Env("FLOWER_ENABLED", "True"),
+        Env("FLOWER_PORT", "5555", force_default=True),
     ],
     "distributed_worker": [
         Env("MASTER_HOST"),
