@@ -5,7 +5,7 @@ set -e
 
 # 检查环境变量
 if [ "$FLOWER_ENABLED" = "True" ]; then
-    echo "Starting Flower service on port $FLOWER_PORT..."
+    echo "Starting Flower service..."
     
     # 使用 exec 确保 Celery 进程接管 PID 1 (在容器中) 或直接接收 Supervisor 信号
     exec celery -A celery_app flower \
