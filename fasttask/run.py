@@ -212,6 +212,7 @@ env_type_to_envs = {
         Env("FLOWER_ENABLED", "True"),
         Env("FLOWER_PORT", "5555", force_default=True),
         Env("FLOWER_UNAUTHENTICATED_API", "True", force_default=True),
+        Env("WORKER_TAG", "default"),
     ],
     "distributed_master": [
         Env("MASTER_HOST", "0.0.0.0", force_default=True),
@@ -234,6 +235,7 @@ env_type_to_envs = {
         Env("MASTER_HOST"),
         Env("TASK_QUEUE_PORT"),
         Env("TASK_QUEUE_PASSWD"),
+        Env("WORKER_TAG", "default"),
     ],
 }
 
