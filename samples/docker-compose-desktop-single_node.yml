@@ -26,3 +26,4 @@ services:
       - PGID=1000
       - TITLE=fasttask-desktop
       - PASSWORD=webtop_passwd
+      - FLOWER_ENABLED=True

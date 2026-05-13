@@ -27,7 +27,7 @@ services:
       - PGID=1000
       - TITLE=fasttask-desktop
       - PASSWORD=webtop_passwd
-
+      - FLOWER_ENABLED=True
 
   fasttask-desktop-worker-get_circle_area:
     image: docker.io/irid/fasttask:desktop-test
@@ -50,6 +50,8 @@ services:
       - MASTER_HOST=fasttask-desktop-master
       - TASK_QUEUE_PORT=6379
       - TASK_QUEUE_PASSWD=passwd
+      - ENABLED_TASKS=get_circle_area
+      - FLOWER_ENABLED=True
 
       # webtop  related
       - PUID=1000
@@ -78,11 +80,12 @@ services:
       - MASTER_HOST=fasttask-desktop-master
       - TASK_QUEUE_PORT=6379
       - TASK_QUEUE_PASSWD=passwd
+      - FLOWER_ENABLED=True
+      - DISABLED_TASKS=get_circle_area
 
       # webtop  related
       - PUID=1000
       - PGID=1000
       - TITLE=fasttask-desktop-worker
       - PASSWORD=passwd
-
     
