@@ -1,4 +1,5 @@
 import os
+from tkinter import getboolean
 from celery import Celery
 from utils.tools import get_list_env
 from kombu import Queue, Exchange
@@ -6,6 +7,7 @@ from kombu import Queue, Exchange
 MASTER_HOST = os.environ["MASTER_HOST"]
 TASK_QUEUE_PORT = os.environ["TASK_QUEUE_PORT"]
 TASK_QUEUE_PASSWD = os.environ["TASK_QUEUE_PASSWD"]
+FLOWER_ENABLED = getboolean("FLOWER_ENABLED")
 
 
 loaded_tasks = get_list_env("LOADED_TASKS")
@@ -21,6 +23,9 @@ app = Celery(
 
 app.conf.update(
     {
+        # 核心：这行代码等同于命令行的 -E 参数
+        "worker_send_task_events": FLOWER_ENABLED,
+
         "task_queues": tuple(
             Queue(task, Exchange("tasks_exchange"), routing_key=task)
             for task in loaded_tasks
