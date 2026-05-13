@@ -62,8 +62,24 @@ class FlowerClient:
         resp.raise_for_status()
         return resp.json()
 
-    def get_workers(self) -> dict:
+    def _post(self, endpoint: str, params: dict = None, timeout: int = 60) -> dict:
+        """发送 POST 请求到 Flower API"""
+        url = f"{self.base_url}/{endpoint}"
+        resp = requests.post(
+            url,
+            auth=self.auth,
+            params=params,
+            timeout=timeout,
+            verify=False,
+        )
+        resp.raise_for_status()
+        return resp.json()
+
+    def get_workers(self, refresh: bool = True) -> dict:
         """获取所有 worker 状态
+
+        Args:
+            refresh: 是否刷新获取最新状态（分布式模式下需要）
 
         返回示例:
         {
@@ -77,7 +93,8 @@ class FlowerClient:
             }
         }
         """
-        return self._request("workers")
+        params = {"refresh": 1} if refresh else None
+        return self._request("workers", params)
 
     def get_tasks(self, state: str = None, limit: int = None, offset: int = None) -> dict:
         """获取任务列表
@@ -125,7 +142,7 @@ class FlowerClient:
             }
         }
         """
-        return self._request("queues")
+        return self._request("queues/length")
 
     def get_worker(self, worker_name: str) -> dict:
         """获取单个 worker 详情"""
@@ -134,6 +151,24 @@ class FlowerClient:
     def get_task(self, task_id: str) -> dict:
         """获取单个任务详情"""
         return self._request(f"tasks/{task_id}")
+
+    def pool_grow(self, worker_name: str, count: int = 1) -> dict:
+        """增加 worker 的并发数
+
+        Args:
+            worker_name: worker 名称 (如 celery@hostname)
+            count: 要增加的并发数
+        """
+        return self._post(f"worker/pool/grow/{worker_name}", {"n": count})
+
+    def pool_shrink(self, worker_name: str, count: int = 1) -> dict:
+        """减少 worker 的并发数
+
+        Args:
+            worker_name: worker 名称 (如 celery@hostname)
+            count: 要减少的并发数
+        """
+        return self._post(f"worker/pool/shrink/{worker_name}", {"n": count})
 
 
 def print_separator(title: str = ""):
@@ -157,9 +192,13 @@ def test_flower_workers(client: FlowerClient):
 
     for name, info in workers.items():
         print(f"\n  Worker: {name}")
-        print(f"    - 状态: {'在线' if info.get('status') else '离线'}")
-        print(f"    - 并发数: {info.get('pool', {}).get('max-concurrency', 'N/A')}")
-        print(f"    - 完成任务: {info.get('total', 0)}")
+        # 分布式模式下，有 stats 数据就表示在线
+        is_online = info.get("stats") is not None
+        print(f"    - 状态: {'在线' if is_online else '离线'}")
+        stats = info.get("stats", {})
+        pool = stats.get("pool", {})
+        print(f"    - 并发数: {pool.get('max-concurrency', 'N/A')}")
+        print(f"    - 完成任务: {stats.get('total', {}).get('total', 0) if isinstance(stats.get('total'), dict) else 0}")
         print(f"    - 活跃任务: {len(info.get('active', []))}")
 
     assert len(workers) > 0, "没有检测到在线的 worker"
@@ -201,16 +240,18 @@ def test_flower_queues(client: FlowerClient):
     print_separator("测试 Flower Queues API")
 
     start = time.time()
-    queues = client.get_queues()
+    queues_data = client.get_queues()
     elapsed = time.time() - start
 
     print(f"响应时间: {elapsed * 1000:.2f}ms")
-    print(f"队列数量: {len(queues)}")
 
-    for name, info in queues.items():
-        print(f"\n  队列: {name}")
-        print(f"    - 待处理消息: {info.get('messages', 0)}")
-        print(f"    - 未确认消息: {info.get('unacked', 0)}")
+    # API 返回格式: {"active_queues": [{"name": "xxx", "messages": 0}, ...]}
+    active_queues = queues_data.get("active_queues", [])
+    print(f"队列数量: {len(active_queues)}")
+
+    for queue_info in active_queues:
+        print(f"\n  队列: {queue_info.get('name')}")
+        print(f"    - 待处理消息: {queue_info.get('messages', 0)}")
 
     print("\n✅ test_flower_queues 通过")
 
@@ -220,7 +261,9 @@ def test_flower_performance(client: FlowerClient, iterations: int = 10):
     print_separator(f"Flower API 性能测试 ({iterations} 次迭代)")
 
     endpoints = [
-        ("workers", lambda: client.get_workers()),
+        # workers 使用 refresh 会触发 Celery inspect，耗时约 1 秒，这是正常的
+        ("workers (refresh)", lambda: client.get_workers(refresh=True)),
+        ("workers (no refresh)", lambda: client.get_workers(refresh=False)),
         ("tasks", lambda: client.get_tasks()),
         ("queues", lambda: client.get_queues()),
     ]
@@ -249,9 +292,13 @@ def test_flower_performance(client: FlowerClient, iterations: int = 10):
         print(f"    最小: {min_time * 1000:.2f}ms")
         print(f"    最大: {max_time * 1000:.2f}ms")
 
-    # 性能断言：平均响应时间应小于 500ms
-    for name, metrics in results.items():
-        assert metrics["avg"] < 0.5, f"{name} 平均响应时间超过 500ms"
+    # 性能断言：
+    # - workers (refresh) 在分布式模式下需要 Celery inspect，允许 2 秒
+    # - 其他 API 应快速响应
+    assert results["workers (refresh)"]["avg"] < 2.0, "workers (refresh) 平均响应时间超过 2秒"
+    assert results["workers (no refresh)"]["avg"] < 0.5, "workers (no refresh) 平均响应时间超过 500ms"
+    assert results["tasks"]["avg"] < 0.5, "tasks 平均响应时间超过 500ms"
+    assert results["queues"]["avg"] < 0.5, "queues 平均响应时间超过 500ms"
 
     print("\n✅ test_flower_performance 通过")
 
@@ -268,17 +315,21 @@ def show_flower_summary(client: FlowerClient):
     elapsed = time.time() - start
 
     # 聚合数据
-    online_workers = [w for w in workers.values() if w.get("status")]
+    online_workers = [w for w in workers.values() if w.get("stats")]
     task_stats = {}
     for task in tasks.values():
         state = task.get("state", "UNKNOWN")
         task_stats[state] = task_stats.get(state, 0) + 1
-    queue_lengths = {k: v.get("messages", 0) for k, v in queues.items()}
+
+    # 队列数据格式: {"active_queues": [{"name": "xxx", "messages": 0}, ...]}
+    active_queues = queues.get("active_queues", [])
+    queue_lengths = {q.get("name"): q.get("messages", 0) for q in active_queues}
 
     print("Flower API 汇总:")
     print(f"  在线 Workers: {len(online_workers)}")
-    for w in online_workers:
-        print(f"    - {w.get('hostname', 'unknown')}")
+    for name, w in workers.items():
+        if w.get("stats"):
+            print(f"    - {name}")
     print(f"  任务统计: {task_stats}")
     print(f"  队列长度: {queue_lengths}")
     print(f"  总耗时: {elapsed * 1000:.2f}ms (3 次请求)")
@@ -306,6 +357,76 @@ def test_flower_auth(client_without_auth: FlowerClient, client_with_auth: Flower
         print(f"✅ 认证访问成功，获取到 {len(workers)} 个 worker")
     except requests.HTTPError as e:
         raise AssertionError(f"认证访问失败: {e}")
+
+
+def test_pool_scale(client: FlowerClient):
+    """测试 worker pool 扩缩容"""
+    print_separator("测试 Worker Pool 扩缩容")
+
+    # 获取当前 worker 信息
+    workers = client.get_workers(refresh=True)
+    if not workers:
+        print("❌ 没有可用的 worker，跳过测试")
+        return
+
+    # 选择第一个 worker 进行测试
+    worker_name = list(workers.keys())[0]
+    stats = workers[worker_name].get("stats", {})
+    pool = stats.get("pool", {})
+    max_concurrency = pool.get("max-concurrency", 16)
+    current_processes = len(pool.get("processes", []))
+
+    print(f"测试 Worker: {worker_name}")
+    print(f"最大并发配置: {max_concurrency}")
+    print(f"当前进程数: {current_processes}")
+
+    # 准备阶段：将进程数调整到 max_concurrency
+    print(f"\n准备阶段: 调整进程数到 {max_concurrency}...")
+    if current_processes < max_concurrency:
+        diff = max_concurrency - current_processes
+        grow_result = client.pool_grow(worker_name, diff)
+        print(f"扩容请求 (+{diff}): {grow_result.get('message', grow_result)}")
+    elif current_processes > max_concurrency:
+        diff = current_processes - max_concurrency
+        shrink_result = client.pool_shrink(worker_name, diff)
+        print(f"收缩请求 (-{diff}): {shrink_result.get('message', shrink_result)}")
+    else:
+        print("进程数已正确，无需调整")
+
+    time.sleep(5)  # 等待进程调整完成
+
+    workers = client.get_workers(refresh=True)
+    pool = workers[worker_name].get("stats", {}).get("pool", {})
+    current_processes = len(pool.get("processes", []))
+    print(f"调整后进程数: {current_processes}")
+
+    # 1. 缩容到 0
+    print("\n步骤 1: 将进程数收缩为 0...")
+    shrink_result = client.pool_shrink(worker_name, current_processes)
+    print(f"收缩请求: {shrink_result.get('message', shrink_result)}")
+    time.sleep(5)
+
+    workers = client.get_workers(refresh=True)
+    current_pool = workers[worker_name].get("stats", {}).get("pool", {})
+    current_processes = len(current_pool.get("processes", []))
+    print(f"当前进程数: {current_processes}")
+    assert current_processes == 0, f"收缩失败，预期 0 个进程，实际 {current_processes}"
+    print("✅ 收缩成功，进程数已为 0")
+
+    # 2. 恢复到最大并发数
+    print(f"\n步骤 2: 恢复进程数到 {max_concurrency}...")
+    grow_result = client.pool_grow(worker_name, max_concurrency)
+    print(f"扩容请求: {grow_result.get('message', grow_result)}")
+    time.sleep(5)
+
+    workers = client.get_workers(refresh=True)
+    current_pool = workers[worker_name].get("stats", {}).get("pool", {})
+    current_processes = len(current_pool.get("processes", []))
+    print(f"当前进程数: {current_processes}")
+    assert current_processes == max_concurrency, f"扩容失败，预期 {max_concurrency} 个进程，实际 {current_processes}"
+    print(f"✅ 扩容成功，进程数已恢复到 {max_concurrency}")
+
+    print("\n✅ test_pool_scale 通过")
 
 
 def main():
@@ -343,6 +464,9 @@ def main():
 
         # 性能测试
         test_flower_performance(client, iterations=10)
+
+        # Pool 扩缩容测试
+        test_pool_scale(client)
 
         # 认证测试
         test_flower_auth(client_without_auth, client)

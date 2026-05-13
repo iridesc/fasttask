@@ -100,13 +100,13 @@ FastTask提供以下核心功能：
     
     你会看到以下接口：
 
-    - status_info:  返回服务状态信息
-    - download:  下载文件接口
-    - upload:  上传文件接口
-    - revoke:  撤销任务接口
+    - status_info:  返回服务状态信息（POST方法，body参数 `fields` 可选值：`worker_status`, `task_info`, `pending_task_count`）
+    - download:  下载文件接口（GET方法，query参数 `file_name`）
+    - upload:  上传文件接口（POST方法，上传文件）
+    - revoke:  撤销任务接口（POST方法，body参数 `{result_id: "xxx"}`）
     - run/get_hypotenuse 同步调用你在tasks中实现的任务
     - create/get_hypotenuse 创建异步任务接口
-    - check/get_hypotenuse 检测任务状态(获取任务结果)接口
+    - check/get_hypotenuse 检测任务状态(获取任务结果)接口（GET方法，query参数 `result_id`）
 
     你可以：
     - 点击 ```try it out``` 直接填写参数调用
@@ -172,6 +172,46 @@ FastTask提供以下核心功能：
     - TASK_QUEUE_PORT: master节点的任务队列端口
     - TASK_QUEUE_PASSWD: master节点的任务队列密码
 
+# 并发控制
+
+FastTask 支持任务级别的并发控制。在调用任务时，可以通过 `fasttask_concurrency_params` 参数限制同一任务的并发执行数量。
+
+参数说明：
+- `concurrency_key`: 并发控制的标识key（必需），相同key的任务共享并发限制
+- `max_concurrency`: 最大并发量（默认16）
+- `countdown`: 获取锁失败后的退避等待时间（默认60秒）
+- `expire`: 锁的过期时间（默认30分钟），避免死锁
+
+使用示例：
+```json
+{
+  "fasttask_concurrency_params": {
+    "concurrency_key": "user_123",
+    "max_concurrency": 5,
+    "countdown": 30,
+    "expire": 600
+  },
+  // 其他任务参数...
+}
+```
+
+# Flower 监控
+
+FastTask 集成了 [Flower](https://flower.readthedocs.io/) 作为 Celery 任务监控工具。通过设置 `FLOWER_ENABLED=True` 启用。
+
+启用后可通过 `/flower` 路径访问 Flower Web UI 和 API：
+- Web UI：`https://localhost/flower/` - 查看任务、Worker、队列状态
+- API：`https://localhost/flower/api/workers`、`/flower/api/tasks` 等
+
+认证说明：
+- Flower 路径复用 FastTask 的 HTTP Basic 认证（`user_to_passwd.json`）
+- 若未配置认证文件，则无需认证即可访问
+
+相关配置：
+- **FLOWER_ENABLED**：是否启用 Flower（默认 False）
+- **FLOWER_PORT**：Flower 服务内部端口（默认 5555）
+- **FLOWER_MAX_TASKS**：Flower 保留的最大任务数量（默认 5000）
+
 # 认证
 
 当存在有效的```files/fasttask/conf/user_to_passwd.json```时， 自动启用认证功能， 文件内容参考：
@@ -191,16 +231,33 @@ FastTask提供以下核心功能：
 # 核心配置
 
 - **SOFT_TIME_LIMIT**： 运行时间限制， 单位秒， 配置时默认为1天， 超过该时间任务进程会被直接杀死， 任务状态会变为失败
+- **TIME_LIMIT**： 硬超时时间， 单位秒， 默认为 SOFT_TIME_LIMIT + 60秒， 任务达到此时间会被强制终止
+- **VISIBILITY_TIMEOUT**： Celery broker 可见性超时， 单位秒， 默认为 TIME_LIMIT + 60秒， 任务在此时间内未被处理会重新入队
 - **RESULT_EXPIRES**： 结果过期时间， 单位秒， 配置时默认为3天， 超过该时间任务结果会被删除
 - **WORKER_CONCURRENCY**： 并发数， 默认为cpu核数
+- **WORKER_POOL**： Worker池类型， 默认为 `prefork`， 可选 `gevent`（需安装 gevent）
+- **DEBUG**： 是否启用调试模式， 默认为 False， 启用后会打印详细请求/响应日志
 - **API_x**： 接口是否启用配置，默认为 True，比如 API_RUN为 False时, 所有任务的run接口都会被禁用
-- **ENABLED_TASKS**： 逗号分隔的任务名称列表（例如 get_circle_area,get_hypotenuse）。如果设置，此 Worker 只会处理这些指定的任务。优先级高于 - DISABLED_TASKS。
+- **ENABLED_TASKS**： 逗号分隔的任务名称列表（例如 get_circle_area,get_hypotenuse）。如果设置，此 Worker 只会处理这些指定的任务。优先级高于 DISABLED_TASKS。
 - **DISABLED_TASKS**：逗号分隔的任务名称列表。如果设置，此 Worker 将不处理这些指定的任务。
+- **FLOWER_ENABLED**：是否启用 Flower 监控服务（默认 False）
+- **FLOWER_PORT**：Flower 服务内部端口（默认 5555）
+- **FLOWER_MAX_TASKS**：Flower 保留的最大任务数量（默认 5000）
+- **WORKER_TAG**：Worker 标识标签，用于区分不同 Worker（默认 "worker")
 
-更多配置餐参考[./fasttask/run.py](https://github.com/iridesc/fasttask/blob/main/fasttask/run.py) env_type_to_envs
+更多配置参考[./fasttask/run.py](https://github.com/iridesc/fasttask/blob/main/fasttask/run.py) env_type_to_envs
+
+# 更新日志
+
+## 2025-05
+- **新增 Flower 监控支持**：集成 Flower 作为 Celery 任务监控工具，可通过 `/flower` 路径访问 Web UI 和 API
+- **新增配置项**：`FLOWER_ENABLED`、`FLOWER_PORT`、`FLOWER_MAX_TASKS`、`WORKER_TAG`
+- **修复 ENABLED_TASKS/DISABLED_TASKS**：修复任务启用/禁用逻辑未生效的问题
+- **优化并发控制**：并发锁 key 增加 `fasttask:lock:` 前缀防止冲突，参数校验优化
+- **优化 Redis 连接**：`timeout` 改为 0（不主动断开），增加 `socket_keepalive`、`retry_on_timeout`，健康检查间隔缩短为 20 秒
+- **优化错误信息**：任务被 kill 时返回更完整的错误信息
 
 # todo
 - 在认证通过前 不展示 docs页面
 - check 接口增加任务创建 更新时间
-- 实现自定义的并发控制
 - 基于结果有效时间，自动清理文件
