@@ -14,6 +14,7 @@ services:
     environment:
       - NODE_TYPE=distributed_master
       - TASK_QUEUE_PASSWD=passwd
+      - FLOWER_ENABLED=True
 
   worker-get_circle_area:
     image: docker.io/irid/fasttask:test
@@ -28,6 +29,10 @@ services:
       - MASTER_HOST=master
       - TASK_QUEUE_PORT=6379
       - TASK_QUEUE_PASSWD=passwd
+      - ENABLED_TASKS=get_circle_area
+      - WORKER_TAG=get_circle_area
+      - FLOWER_ENABLED=True
+        
 
   worker-get_hypotenuse:
     image: docker.io/irid/fasttask:test
@@ -43,3 +48,6 @@ services:
       - MASTER_HOST=master
       - TASK_QUEUE_PORT=6379
       - TASK_QUEUE_PASSWD=passwd
+      - DISABLED_TASKS=get_circle_area
+      - WORKER_TAG=get_hypotenuse
+      - FLOWER_ENABLED=True
