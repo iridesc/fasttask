@@ -212,7 +212,7 @@ env_type_to_envs = {
         Env("API_FILE_UPLOAD", "True"),
         Env("FLOWER_PORT", "5555", force_default=True),
         Env("FLOWER_UNAUTHENTICATED_API", "True", force_default=True),
-        Env("FLOWER_MAX_TASKS", "5000"),
+        Env("FLOWER_MAX_TASKS", "1000"),
         Env("WORKER_TAG", "worker"),
     ],
     "distributed_master": [
@@ -230,7 +230,7 @@ env_type_to_envs = {
         Env("API_FILE_UPLOAD", "True"),
         Env("FLOWER_PORT", "5555", force_default=True),
         Env("FLOWER_UNAUTHENTICATED_API", "True", force_default=True),
-        Env("FLOWER_MAX_TASKS", "5000"),
+        Env("FLOWER_MAX_TASKS", "1000"),
     ],
     "distributed_worker": [
         Env("MASTER_HOST"),
