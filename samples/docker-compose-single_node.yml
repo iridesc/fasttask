@@ -14,3 +14,4 @@ services:
     environment:
       # single_node: 单一节点提供接口+执行任务
       - NODE_TYPE=single_node
+      - FLOWER_ENABLED=True
