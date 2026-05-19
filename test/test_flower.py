@@ -434,8 +434,8 @@ def main():
     # 配置
     HOST = "127.0.0.1"
     PORT = 9001
-    AUTH_USER = ""
-    AUTH_PASSWD = ""
+    AUTH_USER = "admin"
+    AUTH_PASSWD = "passwd"
 
 
     # 创建客户端
