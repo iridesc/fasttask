@@ -227,6 +227,20 @@ FastTask 集成了 [Flower](https://flower.readthedocs.io/) 作为 Celery 任务
 
 当任务结果需要输出到文件时， 你可以把文件保存在```/fasttask/files/0caee52c-b2ca-4c04-b040-82bd952192da_1.xlsx```， 然后你可以调用download接口下载文件。
 
+## 文件过期清理
+
+FastTask 内建文件自动过期删除机制，由 Supervisor 管理的独立进程负责执行。
+
+清理规则：
+- 基于文件最后修改时间（mtime）判断是否过期，过期后直接删除
+- 递归扫描 `files/` 下所有子目录（跳过 `files/fasttask/` 系统目录）
+- 文件删除后若所在目录为空，一并清理空目录
+- 每 10 分钟执行一次清理扫描
+
+相关配置：
+- **FILE_CLEANUP_ENABLED**：是否启用文件清理（默认 `True`）。设为 `False` 时，清理进程不会启动
+- **FILE_EXPIRATION_SECONDS**：文件过期时间（秒），默认为 `SOFT_TIME_LIMIT` × 10（约 10 天）。启用时最小值为 60 秒
+
 
 # 核心配置
 
@@ -244,10 +258,19 @@ FastTask 集成了 [Flower](https://flower.readthedocs.io/) 作为 Celery 任务
 - **FLOWER_PORT**：Flower 服务内部端口（默认 5555）
 - **FLOWER_MAX_TASKS**：Flower 保留的最大任务数量（默认 5000）
 - **WORKER_TAG**：Worker 标识标签，用于区分不同 Worker（默认 "worker")
+- **FILE_CLEANUP_ENABLED**：是否启用文件过期清理（默认 `True`）。设为 `False` 则清理进程不启动
+- **FILE_EXPIRATION_SECONDS**：文件过期时间（秒），默认为 `SOFT_TIME_LIMIT` × 10。启用时最小值为 60 秒
 
 更多配置参考[./fasttask/run.py](https://github.com/iridesc/fasttask/blob/main/fasttask/run.py) env_type_to_envs
 
 # 更新日志
+
+## 2025-06
+- **新增文件过期清理机制**：独立 Supervisor 进程定期扫描 `files/` 目录，基于 mtime 删除过期文件和空目录，跳过 `files/fasttask/` 系统目录
+- **新增配置项**：`FILE_CLEANUP_ENABLED`、`FILE_EXPIRATION_SECONDS`
+- **重构 Supervisor 配置管理**：从单体配置文件改为模板组装模式（`supervisord_template_conf/` → `supervisord_conf/`），根据 `NODE_TYPE`、`FLOWER_ENABLED`、`FILE_CLEANUP_ENABLED` 动态组装
+- **优化 Supervisor 日志输出**：所有日志直接打到 stdout/stderr（`logfile=/dev/stdout`、`pidfile=/dev/null`），不再写本地文件，方便 `docker logs` 查看
+- **修复 Flower 代理中间件**：内部代理请求不走系统代理环境变量（`trust_env=False`），强制使用 IPv4（`127.0.0.1`）
 
 ## 2025-05
 - **新增 Flower 监控支持**：集成 Flower 作为 Celery 任务监控工具，可通过 `/flower` 路径访问 Web UI 和 API
@@ -260,4 +283,3 @@ FastTask 集成了 [Flower](https://flower.readthedocs.io/) 作为 Celery 任务
 # todo
 - 在认证通过前 不展示 docs页面
 - check 接口增加任务创建 更新时间
-- 基于结果有效时间，自动清理文件

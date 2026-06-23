@@ -1,7 +1,7 @@
 # run.py
 import os
+import shutil
 import subprocess
-import uuid
 
 from utils.tools import load_tasks
 
@@ -106,6 +106,11 @@ env_type_to_envs = {
     "common": [
         Env("NODE_TYPE"),
         Env("SOFT_TIME_LIMIT", default_value=24 * 60 * 60),
+        Env("FILE_CLEANUP_ENABLED", "True"),
+        Env(
+            "FILE_EXPIRATION_SECONDS",
+            default_value=lambda: int(os.environ.get("SOFT_TIME_LIMIT")) * 10,
+        ),
         Env(
             "TIME_LIMIT",
             default_value=lambda: int(os.environ.get("SOFT_TIME_LIMIT")) + 60,
@@ -241,13 +246,43 @@ env_type_to_envs = {
 }
 
 
+def assemble_supervisor_conf():
+    """根据 NODE_TYPE 和环境变量，从模板目录组装最终配置到 supervisord_conf/。"""
+    template_dir = "supervisord_template_conf"
+    conf_dir = "supervisord_conf"
+    node_type = os.environ["NODE_TYPE"]
+
+    # 清理并重建配置目录
+    if os.path.exists(conf_dir):
+        shutil.rmtree(conf_dir)
+    os.makedirs(conf_dir)
+
+    # 复制主配置
+    shutil.copy(os.path.join(template_dir, "supervisord.conf"), conf_dir)
+
+    # 按节点类型复制服务配置
+    if node_type in ("single_node", "distributed_master"):
+        shutil.copy(os.path.join(template_dir, "redis.conf"), conf_dir)
+        shutil.copy(os.path.join(template_dir, "uvicorn.conf"), conf_dir)
+        if os.environ.get("FLOWER_ENABLED", "False") == "True":
+            shutil.copy(os.path.join(template_dir, "flower.conf"), conf_dir)
+
+    if node_type in ("single_node", "distributed_worker"):
+        shutil.copy(os.path.join(template_dir, "celery.conf"), conf_dir)
+
+    # file_cleanup: 当 FILE_CLEANUP_ENABLED=True 时启用
+    if os.environ.get("FILE_CLEANUP_ENABLED", "False") == "True":
+        shutil.copy(os.path.join(template_dir, "file_cleanup.conf"), conf_dir)
+
+
 def start():
+    assemble_supervisor_conf()
     os.execv(
         "/usr/bin/supervisord",
         [
             "/usr/bin/supervisord",  # 必须包含可执行文件路径
             "-c",
-            f"supervisord_{os.environ['NODE_TYPE']}.conf",
+            "supervisord_conf/supervisord.conf",
         ],
     )
 
@@ -262,6 +297,13 @@ def check_envs():
 
     if TIME_LIMIT >= VISIBILITY_TIMEOUT:
         raise Exception("VISIBILITY_TIMEOUT must be greater than TIME_LIMIT")
+
+    if os.environ.get("FILE_CLEANUP_ENABLED", "False") == "True":
+        expiration = int(os.environ.get("FILE_EXPIRATION_SECONDS", 0))
+        if expiration < 60:
+            raise Exception(
+                f"FILE_EXPIRATION_SECONDS must be at least 60 seconds, got {expiration}"
+            )
 
 
 def main():

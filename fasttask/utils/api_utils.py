@@ -354,7 +354,7 @@ class FlowerProxyMiddleware(BaseHTTPMiddleware):
 
         # 构造完整 URL，包含查询参数
         query = request.url.query
-        flower_url = f"http://localhost:{os.environ['FLOWER_PORT']}{path}"
+        flower_url = f"http://127.0.0.1:{os.environ['FLOWER_PORT']}{path}"
         if query:
             flower_url = f"{flower_url}?{query}"
 
@@ -365,7 +365,7 @@ class FlowerProxyMiddleware(BaseHTTPMiddleware):
         # 获取请求体
         body = await request.body()
 
-        async with httpx.AsyncClient(timeout=60.0) as client:
+        async with httpx.AsyncClient(timeout=60.0, trust_env=False) as client:
             try:
                 # 发送代理请求
                 proxy_response = await client.request(
