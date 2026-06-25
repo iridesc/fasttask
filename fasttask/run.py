@@ -191,8 +191,9 @@ env_type_to_envs = {
         ),
         Env(
             "LAZY_ACTION_FILE_PATH",
-            "/fasttask/files/",
+            "/fasttask/files/fasttask/lazy_action",
             force_default=True,
+            init_func=init_dir,
             is_print_env=False,
         ),
         Env("WORKER_POOL", "prefork"),

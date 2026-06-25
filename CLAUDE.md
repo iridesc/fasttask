@@ -76,6 +76,7 @@ fasttask/
 ├── celery_app.py        # Celery 应用配置（Redis broker/backend、队列路由、序列化等）
 ├── api.py               # FastAPI 应用：生命周期、中间件、通用接口、动态生成任务接口
 ├── setting.py           # 项目元数据（标题、描述、版本）
+├── cleanup_files.py     # 文件过期清理进程（Supervisor 管理，定期扫描 files/ 目录）
 ├── start_flower.sh      # Flower 启动脚本（由 Supervisor 调用）
 ├── requirements.txt     # Python 依赖
 ├── supervisord_*.conf   # 三种部署模式的 Supervisor 配置
@@ -132,6 +133,9 @@ fasttask/
 - `FLOWER_ENABLED`：是否启用 Flower 监控，默认 `False`
 - `API_RUN` / `API_CREATE` / `API_CHECK` 等：控制各类接口是否启用，默认 `True`
 - `DEBUG`：启用后通过 `LoggingMiddleware` 打印详细请求/响应日志
+- `FILE_CLEANUP_ENABLED`：是否启用文件过期清理，默认 `True`
+- `FILE_EXPIRATION_SECONDS`：文件过期时间（秒），默认 `SOFT_TIME_LIMIT × 10`
+- `FILE_CLEANUP_SKIP_PATTERNS`：清理时额外跳过的路径（逗号分隔，相对于 `files/`），默认为空。`files/fasttask/` 始终被跳过，无需配置
 
 ### Redis 数据库分布
 
