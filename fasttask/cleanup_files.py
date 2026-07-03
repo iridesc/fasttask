@@ -59,7 +59,7 @@ def cleanup_expired_files():
             file_path = os.path.join(root, name)
             if _should_skip(file_path, skip_paths):
                 continue
-            if now - os.path.getmtime(file_path) > expiration_seconds:
+            if now - os.lstat(file_path).st_mtime > expiration_seconds:
                 print(f"清理过期文件: {file_path}")
                 os.remove(file_path)
 
