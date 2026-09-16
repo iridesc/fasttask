@@ -11,7 +11,7 @@ from lazy_action.lazy_action import lazy_action
 from fastapi import HTTPException, status
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from fastapi import Depends, HTTPException, status, UploadFile
-from typing import Any, Annotated
+from typing import Any, Annotated, Optional
 from redis.asyncio import Redis
 import asyncio
 import httpx
@@ -134,13 +134,20 @@ def get_task_statistics_info(task_infos, end_time, task_name=None):
 
 
 def get_current_username(
-    credentials: Annotated[HTTPBasicCredentials, Depends(HTTPBasic())],
+    credentials: Annotated[
+        # auto_error=False：未配置认证（user_to_passwd.json 不存在或为空）时
+        # 不应要求客户端带 Authorization 头，配置了才校验。
+        # 默认的 auto_error=True 会在无头时直接返回 401，
+        # 导致下面的 Anonymous 分支永远走不到。
+        Optional[HTTPBasicCredentials],
+        Depends(HTTPBasic(auto_error=False)),
+    ],
 ):
     user_to_passwd = load_user_to_passwd()
     if not user_to_passwd:
         return "Anonymous"
 
-    if not (
+    if credentials is None or not (
         credentials.username in user_to_passwd
         and secrets.compare_digest(
             credentials.password.encode("utf8"),
