@@ -123,6 +123,7 @@ fasttask/
 ### 关键环境变量
 
 - `NODE_TYPE`：部署模式，必填（`single_node` / `distributed_master` / `distributed_worker`）
+- `UVICORN_WORKERS`：API 的 uvicorn worker 进程数，默认 2
 - `SOFT_TIME_LIMIT`：任务软超时（秒），默认 86400，超时后发送 SIGKILL
 - `TIME_LIMIT`：硬超时，默认 `SOFT_TIME_LIMIT + 60`
 - `VISIBILITY_TIMEOUT`：Celery broker 可见性超时，默认 `TIME_LIMIT + 60`
@@ -132,6 +133,8 @@ fasttask/
 - `ENABLED_TASKS` / `DISABLED_TASKS`：控制 Worker 执行的任务白名单/黑名单
 - `FLOWER_ENABLED`：是否启用 Flower 监控，默认 `False`
 - `API_RUN` / `API_CREATE` / `API_CHECK` 等：控制各类接口是否启用，默认 `True`
+- `RESPONSE_COMPRESS`：是否启用响应 gzip 压缩，默认 `True`。仅在客户端发送 `Accept-Encoding: gzip` 时生效，未声明的客户端行为完全不变；压缩在线程池中执行，不阻塞事件循环。`/download`、`/flower` 以及 `text/event-stream` 响应会自动跳过
+- `RESPONSE_COMPRESS_LEVEL`：gzip 压缩级别，默认 `5`（范围 0-9）。级别越高压缩率略好但 CPU 明显更贵：以 55MB JSON 为例，1 级 148ms / 15.7%，9 级 1129ms / 11.8%。链路带宽越高越适合低级别
 - `DEBUG`：启用后通过 `LoggingMiddleware` 打印详细请求/响应日志
 - `FILE_CLEANUP_ENABLED`：是否启用文件过期清理，默认 `True`
 - `FILE_EXPIRATION_SECONDS`：文件过期时间（秒），默认 `SOFT_TIME_LIMIT × 10`

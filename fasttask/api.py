@@ -27,6 +27,7 @@ from utils.api_utils import (
     try_import_Data,
     upload_sync,
     FlowerProxyMiddleware,
+    SelectiveGZipMiddleware,
     LoggingMiddleware,
 )
 from setting import project_title, project_description, project_summary, project_version
@@ -98,6 +99,21 @@ app = FastAPI(
 )
 
 
+
+# 响应压缩：默认开启（RESPONSE_COMPRESS=False 关闭），压缩级别由 RESPONSE_COMPRESS_LEVEL 控制。
+# - 仅在客户端声明 Accept-Encoding: gzip 时生效，向后兼容；
+# - 压缩在线程池中执行（zlib 压缩期间释放 GIL），不会阻塞事件循环；
+# - /download、/flower 已在 SelectiveGZipMiddleware 中排除。
+# - 必须最先注册（位于最内层、紧贴路由）：外层是 BaseHTTPMiddleware
+#   （FlowerProxyMiddleware / LoggingMiddleware），它们会把响应拆成
+#   more_body=True 的分块再转发。GZip 若在外层就只能看到这种"伪流式"响应，
+#   既要多缓冲一份完整 body，还会被 max_buffer 上限误伤。
+if get_bool_env("RESPONSE_COMPRESS"):
+    app.add_middleware(
+        SelectiveGZipMiddleware,
+        minimum_size=1000,
+        compresslevel=int(os.environ["RESPONSE_COMPRESS_LEVEL"]),
+    )
 
 if get_bool_env("DEBUG"):
     app.add_middleware(LoggingMiddleware)

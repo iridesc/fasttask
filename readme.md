@@ -295,7 +295,7 @@ FastTask 内建文件自动过期删除机制，由 Supervisor 管理的独立�
 - **MASTER_HOST**：Master 节点的 Docker 服务名或 IP 地址。Worker 通过此地址连接 Redis 队列，`single_node` 默认为 `0.0.0.0`
 - **TASK_QUEUE_PORT**：Redis 任务队列端口。`single_node` 和 `distributed_master` 默认为 `6379`
 - **TASK_QUEUE_PASSWD**：Redis 密码。`single_node` 默认为 `passwd`；`distributed_master` 和 `distributed_worker` 为必填
-- **UVICORN_WORKERS**：Uvicorn worker 数量，默认为 1
+- **UVICORN_WORKERS**：Uvicorn worker 数量，默认为 2
 
 ## 任务执行
 
@@ -321,6 +321,11 @@ FastTask 内建文件自动过期删除机制，由 Supervisor 管理的独立�
 - **API_FILE_UPLOAD**：是否启用 `/upload` 文件上传接口
 - **API_STATUS_INFO**：是否启用 `/status_info` 状态查询接口
 - **API_DOCS**：是否启用 `/docs` Swagger 文档页面
+
+## 响应压缩
+
+- **RESPONSE_COMPRESS**：是否启用响应 gzip 压缩，默认为 `True`。仅在客户端发送 `Accept-Encoding: gzip` 时生效，未声明该头的客户端收到的响应与压缩前完全一致；压缩在线程池中执行，不会阻塞事件循环。`/download`、`/flower` 以及 `text/event-stream` 响应会自动跳过。小于 1000 字节的响应不压缩
+- **RESPONSE_COMPRESS_LEVEL**：gzip 压缩级别，默认为 `5`（范围 0-9）。级别越高压缩率略好但 CPU 开销明显更大：以 55MB 的 JSON 为例，1 级耗时 148ms / 压缩率 15.7%，9 级耗时 1129ms / 压缩率 11.8%。级别越高仅适合客户端链路越慢的场景（客户端带宽低于约 97Mbps 时 5 级才比 1 级划算），内网千兆环境推荐用 3 左右
 
 ## Flower 监控
 

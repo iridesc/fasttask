@@ -1,4 +1,5 @@
 from enum import Enum
+import gzip
 import os
 import json
 import datetime
@@ -14,6 +15,7 @@ from typing import Any, Annotated
 from redis.asyncio import Redis
 import asyncio
 import httpx
+from starlette.datastructures import Headers, MutableHeaders
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import Response
@@ -296,6 +298,158 @@ def truncate_body(body: bytes, max_len: int = 200) -> str:
     if len(text) > max_len:
         return f"{text[:max_len]}... [truncated]"
     return text
+
+
+_EXCLUDED_CONTENT_TYPES = ("text/event-stream",)
+
+
+class SelectiveGZipMiddleware:
+    """gzip 响应压缩中间件（压缩在线程池中执行，不阻塞事件循环）。
+
+    相比 Starlette 内置 GZipMiddleware 的差别：
+    - 压缩通过 asyncio.to_thread 跑在线程池里，zlib 压缩期间会释放 GIL，
+      所以不会卡住同一 worker 正在处理的其他请求；
+    - /download、/flower 路径直接跳过（对已压缩文件无收益）；
+    - 必须注册在最内层：外层若是 BaseHTTPMiddleware（FlowerProxyMiddleware /
+      LoggingMiddleware），响应会被拆成 more_body=True 的分块再转发，GZip 在外层
+      就只能看到这种"伪流式"响应，既多缓冲一份完整 body，又会被 max_buffer 误伤；
+    - 攒满完整 body 再压，可以写回 Content-Length，不退化成分块传输；
+    - 压缩后没变小就不压，避免给不可压缩数据白加开销。
+
+    仍然只在客户端声明 Accept-Encoding: gzip 时生效，向后兼容。
+    """
+
+    def __init__(
+        self,
+        app,
+        minimum_size: int = 1000,
+        compresslevel: int = 5,
+        max_buffer: int = 50 * 1024 * 1024,
+        exclude_prefixes=("/download", "/flower"),
+    ):
+        self.app = app
+        self.minimum_size = minimum_size
+        self.compresslevel = compresslevel
+        self.max_buffer = max_buffer
+        self.exclude_prefixes = tuple(exclude_prefixes)
+
+    async def __call__(self, scope, receive, send):
+        if (
+            scope["type"] == "http"
+            and not scope["path"].startswith(self.exclude_prefixes)
+            and "gzip" in Headers(scope=scope).get("accept-encoding", "")
+        ):
+            await _GZipResponder(
+                self.app, self.minimum_size, self.compresslevel, self.max_buffer
+            )(scope, receive, send)
+            return
+        await self.app(scope, receive, send)
+
+
+class _GZipResponder:
+    """把响应体攒成完整 body 再一次性压缩（背景见 SelectiveGZipMiddleware）。
+
+    真正的流式响应一旦超过 max_buffer，就放弃压缩、改为原样透传。
+    """
+
+    __slots__ = (
+        "app",
+        "minimum_size",
+        "compresslevel",
+        "max_buffer",
+        "send",
+        "start_message",
+        "buffer",
+        "passthrough",
+    )
+
+    def __init__(self, app, minimum_size: int, compresslevel: int, max_buffer: int):
+        self.app = app
+        self.minimum_size = minimum_size
+        self.compresslevel = compresslevel
+        self.max_buffer = max_buffer
+        self.send = None
+        self.start_message = None
+        self.buffer = bytearray()
+        self.passthrough = False
+
+    async def __call__(self, scope, receive, send):
+        self.send = send
+        await self.app(scope, receive, self._handle)
+
+    async def _send_body(self, body: bytes) -> None:
+        await self.send(self.start_message)
+        await self.send({"type": "http.response.body", "body": body})
+
+    async def _handle(self, message):
+        if self.passthrough:
+            await self.send(message)
+            return
+
+        message_type = message["type"]
+
+        if message_type == "http.response.start":
+            self.start_message = message
+            headers = Headers(raw=message["headers"])
+            if "content-encoding" in headers or headers.get(
+                "content-type", ""
+            ).startswith(_EXCLUDED_CONTENT_TYPES):
+                self.passthrough = True
+                await self.send(message)
+            return
+
+        if message_type != "http.response.body":
+            # pathsend / trailers 等非常规消息：放弃压缩，原样转发
+            await self._abort_to_passthrough()
+            await self.send(message)
+            return
+
+        chunk = message.get("body", b"")
+        more_body = message.get("more_body", False)
+
+        if not more_body and not self.buffer:
+            # 常见情况：一次性返回完整 body，直接引用，避免多复制一份
+            body = chunk
+        else:
+            self.buffer += chunk
+            if more_body:
+                if len(self.buffer) > self.max_buffer:
+                    await self._abort_to_passthrough()
+                return
+            body = bytes(self.buffer)
+            self.buffer.clear()
+
+        if len(body) < self.minimum_size:
+            await self._send_body(body)
+            return
+
+        # 关键：压缩在线程池里做，zlib 压缩期间释放 GIL，不阻塞事件循环
+        compressed = await asyncio.to_thread(gzip.compress, body, self.compresslevel)
+
+        if len(compressed) >= len(body):
+            # 压不动，保持原样
+            await self._send_body(body)
+            return
+
+        headers = MutableHeaders(raw=self.start_message["headers"])
+        headers["Content-Encoding"] = "gzip"
+        headers["Content-Length"] = str(len(compressed))
+        headers.add_vary_header("Accept-Encoding")
+        await self._send_body(compressed)
+
+    async def _abort_to_passthrough(self):
+        """放弃压缩：把已经攒下的内容先原样发出，后续消息直接透传。"""
+        self.passthrough = True
+        await self.send(self.start_message)
+        if self.buffer:
+            await self.send(
+                {
+                    "type": "http.response.body",
+                    "body": bytes(self.buffer),
+                    "more_body": True,
+                }
+            )
+            self.buffer.clear()
 
 
 class FlowerProxyMiddleware(BaseHTTPMiddleware):
