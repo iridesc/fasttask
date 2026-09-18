@@ -37,7 +37,15 @@ FastTask 平台（Celery + Redis + FastAPI + Uvicorn）的封装与运维助手�
 - **认证与连接**：HTTPS 自签证书（curl 加 `-k`）+ HTTP Basic Auth。实例连接信息
   （HOST/PORT/USER/PASSWD）通常由用户给出（环境变量或直接提供），不要到处猜密码。
 - **典型端点**：`POST /create/{task}`、`GET /check/{task}?result_id=`、
-  `POST /revoke`（body `{"result_id": "..."}`）、`POST /status_info`、`GET /openapi.json`。
+  `POST /revoke`（body `{"result_id": "..."}`）、`POST /status_info`、`GET /openapi.json`、
+  `POST /mcp`（MCP 协议端点，默认启用，供 AI 客户端调用）。
+- **结果形态**：`/check` 与 `/run` 响应带 `result_type` 字段：
+  - `json`：`result` 就是任务结果
+  - `s3`：结果已外置到对象存储，`result` 是引用（含预签名 `url`）；
+    **不要直接把 result 当结果用**，按 `result.url` 下载后再解析
+  - `text`：`result` 是错误信息（失败时含完整 traceback）或状态文本
+
+  客户端用 `fasttask_manager >= 0.6.0` 时会自动处理外置结果。
 
 ## 参考代码（用于翻阅真实实现，不涉及具体项目名/路径）
 

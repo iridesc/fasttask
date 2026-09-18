@@ -95,10 +95,15 @@ curl -sk -u $FTT_USER:$FTT_PASSWD \
 
 `task_name` 必须是该实例已加载的任务名（先看 openapi 或 status_info 里有哪些 `task_info_*` 前缀）。
 
-返回 `{id, state, result}`：
+返回 `{id, state, result_type, result}`：
 - `state` ∈ `PENDING` / `STARTED` / `SUCCESS` / `FAILURE` / `REVOKED` / `RETRY`
-- `SUCCESS`：`result` 为任务结构化输出
-- `FAILURE`：`result` 含 `result=... traceback=...`，可据此定位失败原因
+- `SUCCESS` + `result_type=json`：`result` 为任务结构化输出
+- `SUCCESS` + `result_type=s3`：结果已外置到对象存储，`result` 是引用
+  （`{uri, url, size_bytes, sha256, expires_at}`）。**不要把 result 当成结果用**，
+  用 `result.url`（预签名地址，无需额外凭据）下载后再解析；地址过期就重新 check 一次
+- 下载外置结果的示例（**只带预签名地址，不要加 Basic 凭据，会破坏签名**）：
+  `curl -sk "<result.url>" -o result.json && jq . result.json`
+- `FAILURE` + `result_type=text`：`result` 含 `result=... traceback=...`，可据此定位失败原因
 - 若返回 `{result_id=...} not exist, current {RUNNING_ID=}` → 该 ID 不属于当前实例（前缀错 / 实例已换 Redis）
 
 ---

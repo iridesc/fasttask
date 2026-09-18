@@ -105,6 +105,12 @@ __pycache__/
 #### 4.1 基本结构
 
 ```python
+"""一句话说明这个任务做什么、典型用途是什么。
+
+模块 docstring 会作为 MCP 工具说明展示给 AI 客户端（见「任务结果与 AI 接入」），
+直接影响模型选工具、填参数的准确率，值得认真写。
+"""
+
 import os
 from pydantic import BaseModel
 from celery import current_task
@@ -291,6 +297,60 @@ curl -sk -u admin:your_password "https://localhost:PORT/check/task_name?result_i
 # 成功: {"state": "SUCCESS", "result": {...}}
 # 失败: {"state": "FAILURE", "result": "Traceback..."}
 ```
+
+## 任务结果与 AI 接入
+
+### 结果外置（大结果）
+
+FastTask 默认把结果内联在 Celery backend 里（`RESULT_TYPE=JSON`，与历史行为一致）。
+结果很大时（例如扫描产物几十 MB）可以开启外置：
+
+- `RESULT_TYPE=AUTO`：序列化后超过 `RESULT_AUTO_TO_S3_SIZE`（默认 1MB）才外置
+- `RESULT_TYPE=S3`：一律外置
+- 镜像内置对象存储（versitygw），无需额外部署；容器部署记得映射对象存储端口并配置
+  `S3_PUBLIC_ENDPOINT`（预签名下载地址的对外地址）
+
+开启后 `/check` 的响应形态会变：
+
+```jsonc
+// result_type=json（默认，内联）
+{"id": "...", "state": "SUCCESS", "result_type": "json", "result": {"items": [...]}}
+
+// result_type=s3（外置，只回引用）
+{"id": "...", "state": "SUCCESS", "result_type": "s3",
+ "result": {"uri": "s3://...", "url": "https://...预签名地址", "size_bytes": 14680064, "sha256": "..."}}
+```
+
+**这是破坏性变更**：旧客户端会把引用当成结果用（而且不会报错）。因此升级必须按顺序：
+
+1. 先把客户端升到 `fasttask_manager >= 0.6.0`（会自动下载外置结果，对调用方透明，
+   同时兼容仍返回内联结果的服务端）
+2. 再开启服务端的 `RESULT_TYPE=S3` 或 `AUTO`
+
+另外两点：
+
+- **同步接口 `/run` 不做外置**：它即时消费结果，直接返回（MCP 侧超过 200KB 会截断并给出提示）
+- 需要完整结果时优先用 `create` + `check`（只有异步流程才外置）
+- 未开启外置时任务代码不需要关心这些——返回 `result.model_dump()` 即可
+
+### MCP 端点
+
+镜像默认启用 MCP（`API_MCP=True`），端点为 `https://<host>:<port>/mcp`，
+AI 客户端可直接调用，不需要为此改任何任务代码：
+
+| 工具 | 说明 |
+|---|---|
+| `create_<task>` | 工具参数直接来自任务的 `Params` 模型 |
+| `check_<task>` | 返回状态与结果引用（不外传大结果内容） |
+| `run_<task>` | 同步执行（仅适合秒级完成的任务） |
+| `fasttask_status` / `fasttask_revoke` | 全局状态查询与撤销 |
+
+所以封装任务时有两件事值得做：
+
+1. **写模块 docstring** —— 它会成为工具说明
+2. **给 `Params` 字段加 `Field(description=...)`** —— 它会成为参数说明，AI 靠它决定怎么填
+
+`ENABLED_TASKS` 可控制暴露范围（工具数量随任务数增长，每个任务最多 3 个）。
 
 ## 常见问题排查
 
