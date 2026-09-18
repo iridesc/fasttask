@@ -260,13 +260,23 @@ services:
       - WORKER_CONCURRENCY=4       # Worker 并发数，按需调整
 
       # API 设置（生产环境只保留 create/check）
-      - API_REDOC=False
+      - API_DOCS=False
       - API_RUN=False
       - API_FILE_DOWNLOAD=False
       - API_FILE_UPLOAD=False
+
+      # 结果外置（可选）：AUTO = 超过 1MB 的结果自动存到内置对象存储，
+      # 只回一个签名路径让调用方自行下载，避免大结果塞进 Redis / 上下文。
+      # 不设置则结果内联（与历史行为一致）。
+      # 注意：开启后 /check 的 result 会变成引用，客户端需 fasttask_manager >= 0.6.0
+      # - RESULT_TYPE=AUTO
 ```
 
 **关于 `API_RUN=False`**：禁用同步 `/run/` 端点，只保留异步 `/create/` + `/check/`。长时间任务必须走异步。
+
+**关于 `RESULT_TYPE`**：对象存储是镜像内置的（versitygw），不需要额外部署、不需要暴露端口、
+也没有任何连接配置——一个开关即可。结果下载地址是相对路径（由调用方拼服务地址），
+由 FastTask 的 API 端口代理转发到内置对象存储。
 
 ### 阶段 7：构建、部署、测试
 

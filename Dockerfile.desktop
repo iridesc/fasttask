@@ -1,8 +1,29 @@
 FROM docker.io/linuxserver/webtop:debian-xfce
 
 ENV PYTHONDONTWRITEBYTECODE=1
+
+# mcp 依赖要求 Python >= 3.10，构建时先断言，避免运行期才发现
 RUN apt update && apt install -y nano redis-server python3 python3-pip && ln -s /usr/bin/python3 /usr/bin/python && \
-    apt install -y supervisor && apt-get clean && rm -rf /var/lib/apt/lists/*
+    apt install -y supervisor curl ca-certificates && apt-get clean && rm -rf /var/lib/apt/lists/* && \
+    python3 -c "import sys; assert sys.version_info >= (3, 10), f'需要 Python >= 3.10，当前 {sys.version}'"
+
+# versitygw：内嵌的 S3 兼容对象存储（Apache-2.0），用于结果外置（RESULT_TYPE=S3/AUTO）。
+# 与主 Dockerfile 保持一致：桌面版同样支持结果外置，否则启用 AUTO 会导致服务起不来。
+ARG VERSITYGW_VERSION=v1.8.0
+RUN set -eux; \
+    case "$(dpkg --print-architecture)" in \
+        amd64) vgw_arch="x86_64" ;; \
+        arm64) vgw_arch="arm64" ;; \
+        *) echo "unsupported architecture: $(dpkg --print-architecture)" >&2; exit 1 ;; \
+    esac; \
+    archive="versitygw_${VERSITYGW_VERSION}_Linux_${vgw_arch}.tar.gz"; \
+    curl -fsSL -o /tmp/versitygw.tar.gz \
+        "https://github.com/versity/versitygw/releases/download/${VERSITYGW_VERSION}/${archive}"; \
+    tar -xzf /tmp/versitygw.tar.gz -C /tmp; \
+    mv "/tmp/versitygw_${VERSITYGW_VERSION}_Linux_${vgw_arch}/versitygw" /usr/local/bin/versitygw; \
+    chmod +x /usr/local/bin/versitygw; \
+    rm -rf /tmp/versitygw.tar.gz "/tmp/versitygw_${VERSITYGW_VERSION}_Linux_${vgw_arch}"; \
+    versitygw --version
 
 COPY fasttask/requirements.txt /fasttask/requirements.txt
 RUN pip install -r /fasttask/requirements.txt --break-system-packages

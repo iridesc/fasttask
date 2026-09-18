@@ -41,8 +41,8 @@ FastTask 平台（Celery + Redis + FastAPI + Uvicorn）的封装与运维助手�
   `POST /mcp`（MCP 协议端点，默认启用，供 AI 客户端调用）。
 - **结果形态**：`/check` 与 `/run` 响应带 `result_type` 字段：
   - `json`：`result` 就是任务结果
-  - `s3`：结果已外置到对象存储，`result` 是引用（含预签名 `url`）；
-    **不要直接把 result 当结果用**，按 `result.url` 下载后再解析
+  - `s3`：结果已外置到对象存储，`result` 是引用（含预签名 `url`，**相对路径**）；
+    **不要直接把 result 当结果用**，拼上服务地址（`{服务地址}{result.url}`）下载后再解析
   - `text`：`result` 是错误信息（失败时含完整 traceback）或状态文本
 
   客户端用 `fasttask_manager >= 0.6.0` 时会自动处理外置结果。
