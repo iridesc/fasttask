@@ -318,8 +318,8 @@ FastTask 内建文件自动过期删除机制，由 Supervisor 管理的独立�
   - `JSON`：结果内联在 Celery backend（Redis），行为与历史版本完全一致
   - `S3`：结果一律上传对象存储，Redis 只保留引用
   - `AUTO`：序列化后超过 `RESULT_AUTO_TO_S3_SIZE` 才上传对象存储
-- **RESULT_AUTO_TO_S3_SIZE**：`AUTO` 模式的阈值（字节），默认 `1048576`（1MB）
-- **RESULT_TO_S3_TRIES**：结果上传对象存储的重试次数，默认 `3`；重试后仍失败则该任务失败
+- **RESULT_AUTO_TO_S3_SIZE**：`AUTO` 模式的阈值，内部固定为 `1048576`（1MB），不需要配置
+- **RESULT_TO_S3_TRIES**：上传重试次数，内部固定为 `3`（重试后仍失败则任务失败），不需要配置
 
 对象存储是**模块内置**的，不需要额外部署、不需要暴露额外端口、也不需要配置任何连接信息：
 

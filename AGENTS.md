@@ -134,8 +134,7 @@ fasttask/
 - `VISIBILITY_TIMEOUT`：Celery broker 可见性超时，默认 `TIME_LIMIT + 60`
 - `RESULT_EXPIRES`：结果过期时间（秒），默认 259200（3 天）
 - `RESULT_TYPE`：结果存储方式，默认 `JSON`。`S3` 一律上传对象存储、`AUTO` 超过 `RESULT_AUTO_TO_S3_SIZE` 才上传；`S3`/`AUTO` 需要配置 `S3_*`。**开启后会改变 `/check` 响应的 result 形态（破坏性），客户端需先升到 `fasttask_manager >= 0.6.0`**
-- `RESULT_AUTO_TO_S3_SIZE`：`AUTO` 模式阈值（字节），默认 1MB
-- `RESULT_TO_S3_TRIES`：结果上传对象存储的重试次数，默认 3，重试后仍失败则任务失败
+- `RESULT_AUTO_TO_S3_SIZE` / `RESULT_TO_S3_TRIES`：均为内部固定值（1MB / 3 次），不需要配置
 - 对象存储（`S3_PORT` / `S3_BUCKET` / `S3_ENDPOINT` / 凭据等）均为**模块内置约定**，默认值已就绪，用户只需 `RESULT_TYPE` 开关。下载地址是相对路径，通过 API 端口的路径代理提供，无需暴露额外端口。可被环境变量覆盖（供测试），但不对外文档化
 - `WORKER_CONCURRENCY`：Worker 并发数，默认 CPU 核数
 - `WORKER_POOL`：Worker 池类型，默认 `prefork`，可选 `gevent`

@@ -92,15 +92,7 @@ sys.path.insert(0, str(FASTTASK_DIR))
 os.environ.update(
     {
         "NODE_TYPE": "single_node",
-        "S3_ENDPOINT": S3_ENDPOINT,
-        "S3_BUCKET": S3_BUCKET,
-        "S3_SECURE": S3_SECURE,
-        "S3_ACCESS_KEY": S3_ACCESS_KEY,
-        "S3_SECRET_KEY": S3_SECRET_KEY,
         "RESULT_TYPE": "AUTO",
-        "RESULT_AUTO_TO_S3_SIZE": "1000",
-        "RESULT_TO_S3_TRIES": "3",
-        "S3_PRESIGN_EXPIRES": "3600",
         "FILE_CLEANUP_ENABLED": "False",
         "FLOWER_ENABLED": "False",
         "API_DOCS": "False",
@@ -144,6 +136,20 @@ try:
         pathlib.Path(_path).mkdir(parents=True, exist_ok=True)
 
     # single_node 分支里 MASTER_HOST / TASK_QUEUE_* 是 force_default，这里指向测试 Redis
+    # S3_* 与阈值在 run.py 里是 force_default（对外不允许改），
+    # 验收脚本在环境初始化之后再覆盖，用于指向自建的对象存储实例。
+    os.environ.update(
+        {
+            "S3_ENDPOINT": S3_ENDPOINT,
+            "S3_BUCKET": S3_BUCKET,
+            "S3_SECURE": S3_SECURE,
+            "S3_ACCESS_KEY": S3_ACCESS_KEY,
+            "S3_SECRET_KEY": S3_SECRET_KEY,
+            "RESULT_AUTO_TO_S3_SIZE": "1000",
+            "RESULT_TO_S3_TRIES": "3",
+            "S3_PRESIGN_EXPIRES": "3600",
+        }
+    )
     os.environ["MASTER_HOST"] = REDIS_HOST
     os.environ["TASK_QUEUE_PORT"] = REDIS_PORT
     os.environ["TASK_QUEUE_PASSWD"] = REDIS_PASSWD
