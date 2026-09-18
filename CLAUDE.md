@@ -86,6 +86,7 @@ fasttask/
 ├── utils/
 │   ├── tools.py         # 任务加载、环境变量读取辅助
 │   ├── api_utils.py     # 认证、Worker 状态、文件管理、Flower 代理中间件、日志中间件
+│   ├── result_storage.py # 结果校验/规范化、大结果外置对象存储、预签名下载
 │   └── redis_lock.py    # Redis 并发控制（严格锁，冲突直接失败）
 └── loaded_tasks/        # 运行时生成（由 load_tasks 创建，gitignore）
 ```
@@ -128,6 +129,12 @@ fasttask/
 - `TIME_LIMIT`：硬超时，默认 `SOFT_TIME_LIMIT + 60`
 - `VISIBILITY_TIMEOUT`：Celery broker 可见性超时，默认 `TIME_LIMIT + 60`
 - `RESULT_EXPIRES`：结果过期时间（秒），默认 259200（3 天）
+- `RESULT_TYPE`：结果存储方式，默认 `JSON`。`S3` 一律上传对象存储、`AUTO` 超过 `RESULT_AUTO_TO_S3_SIZE` 才上传；`S3`/`AUTO` 需要配置 `S3_*`
+- `RESULT_AUTO_TO_S3_SIZE`：`AUTO` 模式阈值（字节），默认 1MB
+- `RESULT_TO_S3_TRIES`：结果上传对象存储的重试次数，默认 3，重试后仍失败则任务失败
+- `S3_ENDPOINT` / `S3_BUCKET` / `S3_PREFIX` / `S3_REGION` / `S3_SECURE` / `S3_VERIFY_SSL`：对象存储连接配置
+- `S3_PRESIGN_EXPIRES`：预签名下载地址有效期（秒），默认等于 `SOFT_TIME_LIMIT`
+- `S3_ACCESS_KEY` / `S3_SECRET_KEY`：对象存储凭据，不配置则由 `TASK_QUEUE_PASSWD` 派生（master 与 worker 自动一致）
 - `WORKER_CONCURRENCY`：Worker 并发数，默认 CPU 核数
 - `WORKER_POOL`：Worker 池类型，默认 `prefork`，可选 `gevent`
 - `ENABLED_TASKS` / `DISABLED_TASKS`：控制 Worker 执行的任务白名单/黑名单
@@ -151,5 +158,6 @@ fasttask/
 1. 文件名与函数名必须一致
 2. 必须定义 `Params(BaseModel)` 和 `Result(BaseModel)`，属性名与函数参数名一致
 3. 结果需以 `result.model_dump()` 或字典形式返回
-4. 异常会被捕获并返回完整 traceback
-5. 可通过 `tasks/packages/` 下的模块共享工具函数
+4. 任务返回时框架会用 `Result` 做严格校验，校验失败任务直接失败（fail-fast）
+5. 异常会被捕获并返回完整 traceback
+6. 可通过 `tasks/packages/` 下的模块共享工具函数

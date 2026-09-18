@@ -6,7 +6,11 @@ from celery_app import app
 
 sys.path.append("tasks")
 from utils.redis_lock import RedisConcurrencyController
-from tasks.{task_name} import {task_name}
+from utils.result_storage import finalize_task_result
+from tasks import {task_name} as _task_module
+
+_task_func = getattr(_task_module, "{task_name}")
+_task_result_model = getattr(_task_module, "Result", None)
 
 
 @app.task(bind=True, soft_time_limit={soft_time_limit}, time_limit={time_limit})
@@ -22,14 +26,21 @@ def _{task_name}(self, *args, **kwargs):
         controller = RedisConcurrencyController(max_concurrent=max_concurrency, expire=expire)
         if controller.acquire(concurrency_key):
             try:
-                return {task_name}(*args, **kwargs)
+                raw_result = _task_func(*args, **kwargs)
             finally:
                 controller.release(concurrency_key)
         else:
             countdown = fasttask_concurrency_params['countdown']
             raise self.retry(countdown=countdown)
     else:
-        return {task_name}(*args, **kwargs)
+        raw_result = _task_func(*args, **kwargs)
+
+    # 统一收口：Result 结构校验（fail-fast）+ 规范化 + 按 RESULT_TYPE 决定去向
+    return finalize_task_result(
+        raw_result,
+        task_id=self.request.id,
+        result_model=_task_result_model,
+    )
 """
 
 

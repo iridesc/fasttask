@@ -9,3 +9,4 @@ lazy-action
 portalocker
 flower
 httpx
+minio

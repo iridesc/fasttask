@@ -309,6 +309,36 @@ FastTask 内建文件自动过期删除机制，由 Supervisor 管理的独立�
 - **ENABLED_TASKS**：逗号分隔的任务名称列表（例如 `get_circle_area,get_hypotenuse`）。如果设置，此 Worker 只会处理这些指定的任务。优先级高于 `DISABLED_TASKS`
 - **DISABLED_TASKS**：逗号分隔的任务名称列表。如果设置，此 Worker 将不处理这些指定的任务
 
+## 结果存储
+
+任务返回时会先用任务自定义的 `Result` 模型做结构校验（校验失败 → 任务直接失败，`result_type` 为 `text`），
+再按配置决定结果去向。
+
+- **RESULT_TYPE**：结果存储方式，默认 `JSON`
+  - `JSON`：结果内联在 Celery backend（Redis），行为与历史版本完全一致
+  - `S3`：结果一律上传对象存储，Redis 只保留引用
+  - `AUTO`：序列化后超过 `RESULT_AUTO_TO_S3_SIZE` 才上传对象存储
+- **RESULT_AUTO_TO_S3_SIZE**：`AUTO` 模式的阈值（字节），默认 `1048576`（1MB）
+- **RESULT_TO_S3_TRIES**：结果上传对象存储的重试次数，默认 `3`；重试后仍失败则该任务失败
+- **S3_ENDPOINT**：对象存储地址（如 `minio:9000`），`RESULT_TYPE` 为 `S3`/`AUTO` 时必填
+- **S3_BUCKET**：桶名，`RESULT_TYPE` 为 `S3`/`AUTO` 时必填
+- **S3_PREFIX**：对象 key 前缀，多服务共用一个桶时用于隔离，默认为空
+- **S3_REGION**：区域，默认 `us-east-1`
+- **S3_SECURE**：是否使用 HTTPS 连接对象存储，默认 `False`
+- **S3_VERIFY_SSL**：是否校验对象存储的 TLS 证书，默认 `True`（自签证书场景可设为 `False`）
+- **S3_PRESIGN_EXPIRES**：预签名下载地址有效期（秒），默认与 `SOFT_TIME_LIMIT` 相同
+- **S3_ACCESS_KEY** / **S3_SECRET_KEY**：对象存储凭据。**不配置时由 `TASK_QUEUE_PASSWD` 派生**，master 与所有 worker 自动得到同一份凭据，通常无需配置
+
+当 `RESULT_TYPE` 为 `S3`/`AUTO` 时，启动会做前置校验：`S3_PRESIGN_EXPIRES` 与 `RESULT_EXPIRES` 都必须小于
+`FILE_EXPIRATION_SECONDS`，避免出现“下载地址有效但对象已被清理”的悬空引用。
+
+结果查询接口（`/check/{task_name}`）新增 `result_type` 字段标识 `result` 的类型：
+
+- `json`：`result` 为任务定义的 `Result` 结构（与历史版本一致）
+- `s3`：`result` 为对象存储引用（`uri` / `url` / `size_bytes` / `sha256` / `expires_at`），
+  `url` 是可直接下载的预签名地址，**无需额外凭据**
+- `text`：`result` 为错误信息（失败时为完整 traceback）或任务状态字符串
+
 ## 接口控制
 
 以下开关控制各类 API 接口是否启用，默认均为 `True`：

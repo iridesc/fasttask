@@ -6,7 +6,7 @@ import uuid
 import traceback
 import asyncio
 from enum import Enum
-from typing import Any, Literal, Union, Annotated, Optional
+from typing import Any, Literal, Annotated, Optional
 from importlib import import_module
 
 from utils.tools import get_list_env, get_bool_env
@@ -29,6 +29,13 @@ from utils.api_utils import (
     FlowerProxyMiddleware,
     SelectiveGZipMiddleware,
     LoggingMiddleware,
+)
+from utils.result_storage import (
+    RESULT_TYPE_JSON,
+    RESULT_TYPE_S3,
+    RESULT_TYPE_TEXT,
+    build_s3_result_response,
+    detect_stored_result_type,
 )
 from setting import project_title, project_description, project_summary, project_version
 
@@ -261,7 +268,11 @@ def get_task_apis(task_name):
     class ResultInfo(BaseModel):
         id: str = ""
         state: TaskState = TaskState.failure.value
-        result: Union[Result, str]
+        # json: result 为任务定义的 Result 模型（历史行为）
+        # s3:   result 为对象存储引用（含预签名下载地址）
+        # text: result 为错误信息或状态字符串
+        result_type: Literal["json", "s3", "text"] = RESULT_TYPE_JSON
+        result: Any = ""
 
     if get_bool_env("API_RUN"):
 
@@ -271,13 +282,15 @@ def get_task_apis(task_name):
         ):
 
             try:
-                result = Result(**task(**params.model_dump()))
+                result = Result.model_validate(task(**params.model_dump()))
                 state = TaskState.success.value
+                result_type = RESULT_TYPE_JSON
             except Exception:
                 result = traceback.format_exc()
                 state = TaskState.failure.value
+                result_type = RESULT_TYPE_TEXT
 
-            return ResultInfo(result=result, state=state)
+            return ResultInfo(result=result, state=state, result_type=result_type)
 
     if get_bool_env("API_CREATE"):
 
@@ -321,6 +334,7 @@ def get_task_apis(task_name):
                 return ResultInfo(
                     id=result_id,
                     state=TaskState.failure.value,
+                    result_type=RESULT_TYPE_TEXT,
                     result=f"{result_id=} not exist, current {app.state.RUNNING_ID=}",
                 )
 
@@ -332,13 +346,23 @@ def get_task_apis(task_name):
             result = async_result.result
 
             if state == TaskState.success.value:
-                result = Result(**result)
+                if detect_stored_result_type(result) == RESULT_TYPE_S3:
+                    # 内容已在对象存储：只回引用 + 预签名地址，不回内容
+                    result = build_s3_result_response(result)
+                    result_type = RESULT_TYPE_S3
+                else:
+                    result = Result.model_validate(result)
+                    result_type = RESULT_TYPE_JSON
             elif state == TaskState.failure.value:
                 result = f"{result=} {traceback=}"
+                result_type = RESULT_TYPE_TEXT
             else:
                 result = str(result)
+                result_type = RESULT_TYPE_TEXT
 
-            return ResultInfo(id=result_id, state=state, result=result)
+            return ResultInfo(
+                id=result_id, state=state, result_type=result_type, result=result
+            )
 
 
 for task_name in LOADED_TASKS:

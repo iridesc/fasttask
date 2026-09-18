@@ -16,12 +16,15 @@ class Env:
         force_default=False,
         init_func=None,
         is_print_env=True,
+        optional=False,
     ):
         self.key = key
         self.default_value = default_value
         self.force_default = force_default
         self.init_func = init_func
         self.is_print_env = is_print_env
+        # optional：允许默认值为空（如 S3_* 仅在 RESULT_TYPE=S3/AUTO 时必填）
+        self.optional = optional
 
     def get_default_value(self):
         return (
@@ -30,11 +33,11 @@ class Env:
 
     def init_env(self):
         value = os.environ.get(self.key)
-        if not self.get_default_value() and value is None:
+        if not self.get_default_value() and value is None and not self.optional:
             raise Exception(f"env {self.key} is required")
 
         if value is None:
-            os.environ[self.key] = str(self.get_default_value())
+            os.environ[self.key] = str(self.get_default_value() or "")
             self.print_env("use default env.")
         elif self.force_default:
             os.environ[self.key] = str(self.get_default_value())
@@ -120,6 +123,24 @@ env_type_to_envs = {
             default_value=lambda: int(os.environ.get("TIME_LIMIT")) + 60,
         ),
         Env("RESULT_EXPIRES", f"{3 * 24 * 60 * 60}"),
+        # 结果存储层：JSON（默认，内联在 Celery backend）/ S3 / AUTO（超阈值走对象存储）
+        Env("RESULT_TYPE", "JSON"),
+        Env("RESULT_AUTO_TO_S3_SIZE", str(1024 * 1024)),
+        Env("RESULT_TO_S3_TRIES", "3"),
+        # 对象存储连接：RESULT_TYPE 为 S3/AUTO 时必填，其余情况可留空
+        Env("S3_ENDPOINT", default_value="", optional=True),
+        Env("S3_BUCKET", default_value="", optional=True),
+        Env("S3_PREFIX", default_value="", optional=True),
+        Env("S3_REGION", "us-east-1"),
+        Env("S3_SECURE", "False"),
+        Env("S3_VERIFY_SSL", "True"),
+        # 不配置则由 TASK_QUEUE_PASSWD 派生，保证 master 与 worker 一致
+        Env("S3_ACCESS_KEY", default_value="", optional=True),
+        Env("S3_SECRET_KEY", default_value="", optional=True),
+        Env(
+            "S3_PRESIGN_EXPIRES",
+            default_value=lambda: int(os.environ.get("SOFT_TIME_LIMIT")),
+        ),
         Env(
             "LOADED_TASKS",
             default_value=lambda: ",".join(
@@ -310,6 +331,46 @@ def check_envs():
             raise Exception(
                 f"FILE_EXPIRATION_SECONDS must be at least 60 seconds, got {expiration}"
             )
+
+    check_result_storage_envs()
+
+
+def check_result_storage_envs():
+    """结果存储层的前置校验（RESULT_TYPE=S3/AUTO 时生效）。"""
+    result_type = os.environ.get("RESULT_TYPE", "JSON").strip().upper()
+
+    if result_type not in ("S3", "AUTO"):
+        return
+
+    if not os.environ.get("S3_ENDPOINT"):
+        raise Exception("S3_ENDPOINT is required when RESULT_TYPE is S3/AUTO")
+    if not os.environ.get("S3_BUCKET"):
+        raise Exception("S3_BUCKET is required when RESULT_TYPE is S3/AUTO")
+
+    # 上传重试次数必须为正，否则 @retry 语义不成立
+    tries = int(os.environ.get("RESULT_TO_S3_TRIES", 3))
+    if tries < 1:
+        raise Exception(f"RESULT_TO_S3_TRIES must be >= 1, got {tries}")
+
+    # 预签名有效期不得超过对象保留期，否则会出现“URL 有效但对象已删”的悬空地址
+    presign_expires = int(os.environ.get("S3_PRESIGN_EXPIRES", 0))
+    file_expiration = int(os.environ.get("FILE_EXPIRATION_SECONDS", 0))
+    if presign_expires >= file_expiration:
+        raise Exception(
+            "S3_PRESIGN_EXPIRES must be less than FILE_EXPIRATION_SECONDS: "
+            f"S3_PRESIGN_EXPIRES={presign_expires} "
+            f"FILE_EXPIRATION_SECONDS={file_expiration}"
+        )
+
+    # 结果引用（Redis）必须早于对象清理（对象存储）失效，
+    # 否则 check 会返回一个指向已被删除对象的引用。
+    result_expires = int(os.environ.get("RESULT_EXPIRES", 0))
+    if result_expires >= file_expiration:
+        raise Exception(
+            "RESULT_EXPIRES must be less than FILE_EXPIRATION_SECONDS: "
+            f"RESULT_EXPIRES={result_expires} "
+            f"FILE_EXPIRATION_SECONDS={file_expiration}"
+        )
 
 
 def main():
