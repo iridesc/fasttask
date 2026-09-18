@@ -2,13 +2,14 @@
 
 设计原则
 --------
-- **纯翻译层**：不引入任何新的状态或机制。任务队列、状态存储、并发控制、
-  超时与撤销仍然全部由 FastTask 自己负责，MCP 只做协议与语义的转换。
+- **纯翻译层**：不引入新的状态或机制。任务队列、状态存储、并发控制、
+  超时与撤销仍然全部由 FastTask 自己负责。
+- **业务逻辑不重复**：创建 / 查询 / 同步执行都走 ``utils/task_ops.py``，
+  与 HTTP 接口共用同一套实现，避免两条通道语义漂移。
 - **工具集合跟随 API_* 开关**：``API_CREATE`` / ``API_CHECK`` / ``API_RUN``
-  决定注册哪些工具，工具描述也随之调整，保证“描述里提到的能力”一定可用。
-- **返回值保持轻量**：``check_*`` 只回状态与结果引用。结果可能到几十 MB，
-  外置存储时返回预签名下载地址，由调用方下载到本地再解析，
-  避免把整个结果灌进模型上下文。
+  决定注册哪些工具，描述也随之调整，保证“描述里提到的能力”一定可用。
+- **返回值保持轻量**：``check_*`` 只回状态与结果引用，大结果由调用方
+  按预签名地址自行下载，避免灌进模型上下文。
 - **无状态传输**：``stateless_http=True``。``UVICORN_WORKERS`` 默认为 2，
   有状态模式会让会话散落在不同 worker 上而随机返回 404 Session not found。
 """
@@ -19,27 +20,25 @@ import datetime
 import inspect
 import json
 import secrets
-import traceback
-import uuid
-from importlib import import_module
 from typing import Annotated
 
 from celery_app import app as celery_app
 
 from utils.api_utils import (
-    TaskState,
     get_pending_task_count,
     get_task_statistics_info,
     get_worker_status,
     load_redis_task_infos,
     load_user_to_passwd,
 )
-from utils.result_storage import (
-    RESULT_TYPE_JSON,
-    RESULT_TYPE_S3,
-    RESULT_TYPE_TEXT,
-    build_s3_result_response,
-    detect_stored_result_type,
+from utils.result_storage import RESULT_TYPE_JSON, RESULT_TYPE_TEXT
+from utils.task_ops import (
+    check_task,
+    create_task,
+    load_task_model,
+    new_task_id,
+    run_task_sync,
+    task_doc,
 )
 from utils.tools import get_bool_env
 
@@ -47,7 +46,7 @@ from utils.tools import get_bool_env
 MCP_PATH = "/mcp"
 MCP_SERVER_NAME = "fasttask"
 
-# run_* 是同步执行、结果直接进上下文，超过该体量就截断并引导改用 create + check
+# run_* 是同步执行、结果直接进上下文；超过该体量就截断并引导改用 create + check
 _RUN_INLINE_LIMIT = 200 * 1024
 
 _MCP_INSTRUCTIONS = """FastTask 异步任务平台。
@@ -69,143 +68,8 @@ result.url 是可直接下载的预签名地址，请先用 shell 下载到本�
 
 
 # --------------------------------------------------------------------------- #
-# 工具实现（语义与 HTTP 接口一一对应）
+# 小工具
 # --------------------------------------------------------------------------- #
-def _load_loaded_task(task_name):
-    """取运行期生成的 Celery 任务对象（loaded_tasks._<task_name>）。"""
-    module = import_module(package="loaded_tasks", name=f".{task_name}")
-    return getattr(module, f"_{task_name}")
-
-
-def _task_doc(task_name):
-    """任务模块的 docstring，作为工具描述的一部分。"""
-    try:
-        module = import_module(package="tasks", name=f".{task_name}")
-    except Exception:  # noqa: BLE001
-        return None
-    doc = (module.__doc__ or "").strip()
-    return doc or None
-
-
-def _describe_success(raw_result, result_model):
-    """把成功结果翻译成 (result_type, payload)。"""
-    if detect_stored_result_type(raw_result) == RESULT_TYPE_S3:
-        return RESULT_TYPE_S3, build_s3_result_response(raw_result)
-
-    value = raw_result
-    if result_model is not None:
-        value = result_model.model_validate(raw_result)
-    if hasattr(value, "model_dump"):
-        value = value.model_dump(mode="json")
-    return RESULT_TYPE_JSON, value
-
-
-def _do_create(task_name, params_dict, running_id):
-    loaded_task = _load_loaded_task(task_name)
-    async_result = loaded_task.apply_async(
-        args=(),
-        kwargs={**params_dict, "fasttask_concurrency_params": None},
-        task_id=f"{running_id}-{uuid.uuid4()}",
-        queue=task_name,
-    )
-    return {
-        "result_id": async_result.id,
-        "state": async_result.state,
-        "hint": f"用 check_{task_name}(result_id=...) 查询状态与结果",
-    }
-
-
-def _do_check(task_name, result_id, running_id, result_model):
-    if not result_id.startswith(running_id):
-        return {
-            "result_id": result_id,
-            "state": TaskState.failure.value,
-            "result_type": RESULT_TYPE_TEXT,
-            "result": f"{result_id} 不存在；当前服务实例标识为 {running_id}",
-        }
-
-    async_result = celery_app.AsyncResult(result_id)
-    state = async_result.state
-    traceback_text = async_result.traceback
-    raw_result = async_result.result
-
-    if state == TaskState.success.value:
-        result_type, payload = _describe_success(raw_result, result_model)
-        response = {
-            "result_id": result_id,
-            "state": state,
-            "result_type": result_type,
-            "result": payload,
-        }
-        if result_type == RESULT_TYPE_S3:
-            response["hint"] = (
-                "结果已外置到对象存储：请用 result.url 下载到本地后再解析。"
-                "结果可能很大，不要把整个内容读入上下文。"
-            )
-        return response
-
-    if state == TaskState.failure.value:
-        return {
-            "result_id": result_id,
-            "state": state,
-            "result_type": RESULT_TYPE_TEXT,
-            "result": f"{raw_result!r}\n{traceback_text}",
-        }
-
-    return {
-        "result_id": result_id,
-        "state": state,
-        "result_type": RESULT_TYPE_TEXT,
-        "result": str(raw_result),
-    }
-
-
-def _do_run(task_name, params_dict, result_model, task_id):
-    """同步执行任务并返回结果。
-
-    用 Celery 的 ``apply()``（本地立即执行、不走队列）而不是直接调用任务对象：
-    直接调用时 ``self.request.id`` 为 None，一旦结果需要外置就会产生
-    ``None.json`` 这种互相覆盖的 key。
-    """
-    loaded_task = _load_loaded_task(task_name)
-    eager = loaded_task.apply(
-        args=(),
-        kwargs={**params_dict, "fasttask_concurrency_params": None},
-        task_id=task_id,
-    )
-
-    if eager.state != TaskState.success.value:
-        return {
-            "task_id": task_id,
-            "state": eager.state,
-            "result_type": RESULT_TYPE_TEXT,
-            "result": f"{eager.result!r}\n{eager.traceback}",
-        }
-
-    result_type, payload = _describe_success(eager.result, result_model)
-    serialized = json.dumps(payload, ensure_ascii=False)
-    if len(serialized) > _RUN_INLINE_LIMIT:
-        return {
-            "task_id": task_id,
-            "state": TaskState.success.value,
-            "result_type": RESULT_TYPE_TEXT,
-            "truncated": True,
-            "result": serialized[:1024],
-            "hint": (
-                f"同步执行的结果约 {len(serialized)} 字节，已截断以避免塞满上下文。"
-                f"需要完整结果请改用 create_{task_name} + check_{task_name}"
-                "（大结果会自动外置到对象存储并提供下载地址）。"
-            ),
-        }
-
-    return {
-        "task_id": task_id,
-        "state": TaskState.success.value,
-        "result_type": result_type,
-        "result": payload,
-    }
-
-
 def _json(data) -> str:
     return json.dumps(data, ensure_ascii=False, indent=2)
 
@@ -225,23 +89,45 @@ def _flat_signature(model_cls):
     )
 
 
+def _truncate_run_result(payload: dict, task_name: str) -> dict:
+    """run_* 的结果直接进上下文：内联结果过大时截断并引导走异步流程。"""
+    if payload.get("result_type") != RESULT_TYPE_JSON:
+        return payload
+
+    serialized = json.dumps(payload.get("result"), ensure_ascii=False)
+    if len(serialized) <= _RUN_INLINE_LIMIT:
+        return payload
+
+    return {
+        "result_id": payload.get("result_id"),
+        "state": payload.get("state"),
+        "result_type": RESULT_TYPE_TEXT,
+        "truncated": True,
+        "result": serialized[:1024],
+        "hint": (
+            f"同步执行的结果约 {len(serialized)} 字节，已截断以避免塞满上下文。"
+            f"需要完整结果请改用 create_{task_name} + check_{task_name}"
+            "（大结果会自动外置到对象存储并提供下载地址）。"
+        ),
+    }
+
+
 # --------------------------------------------------------------------------- #
 # 工具注册
 # --------------------------------------------------------------------------- #
-def _register_create_tool(mcp, task_name, params_model, result_model, running_id_getter):
+def _register_create_tool(mcp, task_name, params_model, running_id_getter):
     async def create_tool(**kwargs) -> str:
         params = params_model(**kwargs) if params_model is not None else kwargs
-        running_id = running_id_getter()
-        result = await asyncio.to_thread(
-            _do_create, task_name, params.model_dump(), running_id
+        payload = await asyncio.to_thread(
+            create_task, task_name, params.model_dump(), running_id_getter()
         )
-        return _json(result)
+        return _json(payload)
 
     create_tool.__name__ = f"create_{task_name}"
     if params_model is not None:
         create_tool.__signature__ = _flat_signature(params_model)
 
-    doc = _task_doc(task_name)
+    doc = task_doc(task_name)
     lines = [f"创建 {task_name} 异步任务，立即返回 result_id，任务在后台排队执行。"]
     if doc:
         lines.append(f"任务说明：{doc}")
@@ -256,14 +142,12 @@ def _register_create_tool(mcp, task_name, params_model, result_model, running_id
 
 def _register_check_tool(mcp, task_name, result_model, running_id_getter):
     async def check_tool(result_id: str) -> str:
-        running_id = running_id_getter()
-        result = await asyncio.to_thread(
-            _do_check, task_name, result_id, running_id, result_model
+        payload = await asyncio.to_thread(
+            check_task, result_id, running_id_getter(), result_model
         )
-        return _json(result)
+        return _json(payload)
 
     check_tool.__name__ = f"check_{task_name}"
-    check_tool.__doc__ = None
 
     description = (
         f"查询 {task_name} 任务的执行状态与结果。\n"
@@ -271,10 +155,9 @@ def _register_check_tool(mcp, task_name, result_model, running_id_getter):
         "返回字段：\n"
         "- state：PENDING(排队) / STARTED(执行中) / RETRY(重试) / "
         "SUCCESS(成功) / FAILURE(失败) / REVOKED(已撤销)\n"
-        "- result_type：json / s3 / text，决定 result 的含义\n"
-        "- result_type=json 时 result 即任务结果；\n"
-        "- result_type=s3 时 result 是对象存储引用，其中 result.url 是预签名下载地址；\n"
-        "- result_type=text 时 result 为错误信息（失败时含完整 traceback）。\n"
+        "- result_type：json / s3 / text，决定 result 的含义；\n"
+        "  json → result 即任务结果；text → result 为错误信息（含完整 traceback）；\n"
+        "  s3 → 结果已外置，result.url 是预签名下载地址。\n"
         "\n"
         "重要：结果可能非常大（几十 MB）。当 result_type=s3 时，"
         "务必先把结果下载到本地再解析，不要直接读取内容：\n"
@@ -288,24 +171,26 @@ def _register_check_tool(mcp, task_name, result_model, running_id_getter):
 def _register_run_tool(mcp, task_name, params_model, result_model, running_id_getter):
     async def run_tool(**kwargs) -> str:
         params = params_model(**kwargs) if params_model is not None else kwargs
-        task_id = f"{running_id_getter()}-{uuid.uuid4()}"
-        result = await asyncio.to_thread(
-            _do_run, task_name, params.model_dump(), result_model, task_id
+        payload = await asyncio.to_thread(
+            run_task_sync,
+            task_name,
+            params.model_dump(),
+            new_task_id(running_id_getter()),
+            result_model,
         )
-        return _json(result)
+        return _json(_truncate_run_result(payload, task_name))
 
     run_tool.__name__ = f"run_{task_name}"
     if params_model is not None:
         run_tool.__signature__ = _flat_signature(params_model)
 
-    doc = _task_doc(task_name)
+    doc = task_doc(task_name)
     lines = [
         f"同步执行 {task_name} 任务并直接返回结果（不进入任务队列）。",
         "仅适合预计数秒内完成的任务：执行期间会一直占用本次调用，"
         "超出客户端等待时间会失败。耗时任务请改用 "
         f"create_{task_name} + check_{task_name}。",
-        "小结果直接返回；大结果会外置到对象存储（result_type=s3，"
-        "请下载 result.url 后解析），或按阈值截断并给出提示。",
+        "小结果直接返回；过大时会截断并给出提示（需要完整结果请走异步流程）。",
     ]
     if doc:
         lines.append(f"任务说明：{doc}")
@@ -316,15 +201,16 @@ def _register_status_tool(mcp, task_names, running_id_getter):
     async def status_tool() -> str:
         task_infos = (await load_redis_task_infos(task_names)).values()
         end_time = datetime.datetime.now(datetime.timezone.utc)
-        payload = {
-            "running_id": running_id_getter(),
-            "worker_status": await get_worker_status(celery_app),
-            "pending_task_count": await get_pending_task_count(task_names=task_names),
-            "task_info_total": get_task_statistics_info(
-                end_time=end_time, task_infos=task_infos
-            ),
-        }
-        return _json(payload)
+        return _json(
+            {
+                "running_id": running_id_getter(),
+                "worker_status": await get_worker_status(celery_app),
+                "pending_task_count": await get_pending_task_count(task_names),
+                "task_info_total": get_task_statistics_info(
+                    end_time=end_time, task_infos=task_infos
+                ),
+            }
+        )
 
     status_tool.__name__ = "fasttask_status"
     mcp.tool(
@@ -369,9 +255,6 @@ def _register_revoke_tool(mcp, running_id_getter):
     )(revoke_tool)
 
 
-# --------------------------------------------------------------------------- #
-# 构建入口
-# --------------------------------------------------------------------------- #
 def build_mcp_server(task_names, running_id_getter):
     """构建 FastMCP 实例，并按 API_* 开关动态注册任务工具。"""
     from mcp.server.fastmcp import FastMCP
@@ -390,13 +273,11 @@ def build_mcp_server(task_names, running_id_getter):
     enable_run = get_bool_env("API_RUN")
 
     for task_name in task_names:
-        params_model = _load_task_model(task_name, "Params")
-        result_model = _load_task_model(task_name, "Result")
+        params_model = load_task_model(task_name, "Params")
+        result_model = load_task_model(task_name, "Result")
 
         if enable_create:
-            _register_create_tool(
-                mcp, task_name, params_model, result_model, running_id_getter
-            )
+            _register_create_tool(mcp, task_name, params_model, running_id_getter)
         if enable_check:
             _register_check_tool(mcp, task_name, result_model, running_id_getter)
         if enable_run:
@@ -412,26 +293,14 @@ def build_mcp_server(task_names, running_id_getter):
     return mcp
 
 
-def _load_task_model(task_name, name):
-    """取任务模块里的 Params / Result 模型；属性不存在时返回 None。
-
-    导入失败不吞异常：任务模块加载不了意味着服务本身有问题，
-    与 api.py 注册路由时的行为保持一致（在这里就报错，
-    而不是默默生成一个“参数为空的工具”让人去猜）。
-    """
-    module = import_module(package="tasks", name=f".{task_name}")
-    return getattr(module, name, None)
-
-
 # --------------------------------------------------------------------------- #
-# 认证
+# 认证（复用 FastTask 既有的 HTTP Basic 凭据）
 # --------------------------------------------------------------------------- #
 class MCPAuthMiddleware:
-    """MCP 端点认证：复用 FastTask 既有的 HTTP Basic 凭据。
+    """行为与其它 HTTP 接口保持一致：
 
-    行为与 HTTP 接口保持一致：
     - ``user_to_passwd.json`` 不存在或为空 → 匿名放行（不要求带头）
-    - 否则要求 ``Authorization: Basic ...``，凭据与其它接口完全相同
+    - 否则要求 ``Authorization: Basic ...``，凭据完全相同
     """
 
     def __init__(self, app):
@@ -443,22 +312,17 @@ class MCPAuthMiddleware:
             return
 
         user_to_passwd = load_user_to_passwd()
-        if not user_to_passwd:
-            await self.app(scope, receive, send)
-            return
-
-        if self._authenticated(scope, user_to_passwd):
+        if not user_to_passwd or self._authenticated(scope, user_to_passwd):
             await self.app(scope, receive, send)
             return
 
         from starlette.responses import JSONResponse
 
-        response = JSONResponse(
+        await JSONResponse(
             {"detail": "Not authenticated"},
             status_code=401,
             headers={"WWW-Authenticate": 'Basic realm="fasttask"'},
-        )
-        await response(scope, receive, send)
+        )(scope, receive, send)
 
     @staticmethod
     def _authenticated(scope, user_to_passwd) -> bool:

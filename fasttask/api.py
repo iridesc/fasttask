@@ -32,12 +32,15 @@ from utils.api_utils import (
 )
 from utils.result_storage import (
     RESULT_TYPE_JSON,
-    RESULT_TYPE_S3,
     RESULT_TYPE_TEXT,
-    build_s3_result_response,
-    detect_stored_result_type,
     ensure_bucket,
     is_s3_enabled,
+)
+from utils.task_ops import (
+    check_task,
+    create_task,
+    new_task_id,
+    run_task_sync,
 )
 from setting import project_title, project_description, project_summary, project_version
 
@@ -291,9 +294,8 @@ if get_bool_env("API_REVOKE"):
 def get_task_apis(task_name):
     task_base_tag = [f"Task: {task_name}"]
 
-    task = getattr(
-        import_module(package="loaded_tasks", name=f".{task_name}"), f"_{task_name}"
-    )
+    # 预加载任务模块：任务无法导入时在启动阶段就暴露，而不是等到首次调用
+    import_module(package="loaded_tasks", name=f".{task_name}")
 
     task_model = import_module(package="tasks", name=f".{task_name}")
     Result = try_import_Data(task_model, "Result")
@@ -311,34 +313,36 @@ def get_task_apis(task_name):
         result_type: Literal["json", "s3", "text"] = RESULT_TYPE_JSON
         result: Any = ""
 
+    def as_result_info(payload: dict) -> ResultInfo:
+        """把 task_ops 的返回结构转成 HTTP 响应模型。"""
+        return ResultInfo(
+            id=payload.get("result_id", ""),
+            state=payload["state"],
+            result_type=payload["result_type"],
+            result=payload["result"],
+        )
+
+    def failure_payload() -> dict:
+        return {
+            "state": TaskState.failure.value,
+            "result_type": RESULT_TYPE_TEXT,
+            "result": traceback.format_exc(),
+        }
+
     if get_bool_env("API_RUN"):
 
         @app.post(f"/run/{task_name}", response_model=ResultInfo, tags=task_base_tag)
         def run(
             params: FullParams, username: Annotated[str, Depends(get_current_username)]
         ):
-
-            try:
-                # 同步执行：apply() 本地跑并显式给 task_id。
-                # 任务包装层对 is_eager 的执行不做结果外置（run 的语义就是直接拿结果），
-                # 因此这里直接按 Result 校验即可。
-                eager = task.apply(
-                    args=(),
-                    kwargs=params.model_dump(),
-                    task_id=f"{app.state.RUNNING_ID}-{uuid.uuid4()}",
+            return as_result_info(
+                run_task_sync(
+                    task_name,
+                    params.model_dump(),
+                    new_task_id(app.state.RUNNING_ID),
+                    Result,
                 )
-                if eager.state != TaskState.success.value:
-                    raise Exception(f"{eager.result!r}\n{eager.traceback}")
-
-                result = Result.model_validate(eager.result)
-                state = TaskState.success.value
-                result_type = RESULT_TYPE_JSON
-            except Exception:
-                result = traceback.format_exc()
-                state = TaskState.failure.value
-                result_type = RESULT_TYPE_TEXT
-
-            return ResultInfo(result=result, state=state, result_type=result_type)
+            )
 
     if get_bool_env("API_CREATE"):
 
@@ -351,22 +355,14 @@ def get_task_apis(task_name):
             params: FullParams,
             username: Annotated[str, Depends(get_current_username)],
         ):
-
             try:
-                async_result = task.apply_async(
-                    args=(),
-                    kwargs=params.model_dump(),
-                    task_id=f"{app.state.RUNNING_ID}-{uuid.uuid4()}",
-                    queue=task_name,
+                payload = create_task(
+                    task_name, params.model_dump(), app.state.RUNNING_ID
                 )
             except Exception:
-                result_info = ResultInfo(result=traceback.format_exc())
-            else:
-                result_info = ResultInfo(
-                    id=async_result.id, state=async_result.state, result=""
-                )
+                payload = failure_payload()
 
-            return result_info
+            return as_result_info(payload)
 
     if get_bool_env("API_CHECK"):
 
@@ -378,39 +374,7 @@ def get_task_apis(task_name):
         def check(
             result_id: str, username: Annotated[str, Depends(get_current_username)]
         ):
-            if not result_id.startswith(app.state.RUNNING_ID):
-                return ResultInfo(
-                    id=result_id,
-                    state=TaskState.failure.value,
-                    result_type=RESULT_TYPE_TEXT,
-                    result=f"{result_id=} not exist, current {app.state.RUNNING_ID=}",
-                )
-
-            async_result = celery_app.AsyncResult(result_id)
-
-            # 立即获取 状态以及数据 尽量避免不一致的情况
-            state = async_result.state
-            traceback = async_result.traceback
-            result = async_result.result
-
-            if state == TaskState.success.value:
-                if detect_stored_result_type(result) == RESULT_TYPE_S3:
-                    # 内容已在对象存储：只回引用 + 预签名地址，不回内容
-                    result = build_s3_result_response(result)
-                    result_type = RESULT_TYPE_S3
-                else:
-                    result = Result.model_validate(result)
-                    result_type = RESULT_TYPE_JSON
-            elif state == TaskState.failure.value:
-                result = f"{result=} {traceback=}"
-                result_type = RESULT_TYPE_TEXT
-            else:
-                result = str(result)
-                result_type = RESULT_TYPE_TEXT
-
-            return ResultInfo(
-                id=result_id, state=state, result_type=result_type, result=result
-            )
+            return as_result_info(check_task(result_id, app.state.RUNNING_ID, Result))
 
 
 for task_name in LOADED_TASKS:

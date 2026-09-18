@@ -117,41 +117,6 @@ def get_s3_public_endpoint():
     return (os.environ.get("S3_PUBLIC_ENDPOINT") or "").strip()
 
 
-def get_public_s3_client():
-    """生成预签名 URL 专用客户端（endpoint 为对外地址）。
-
-    SigV4 签名包含 Host 头，所以不能“事后把 URL 的主机名换掉”——
-    必须直接以对外地址计算签名，否则对象存储侧校验会失败（403 SignatureDoesNotMatch）。
-    `presigned_get_object` 只做签名计算、不发起请求，因此对外地址即使当前不可达也没关系。
-    """
-    global _public_s3_client, _public_s3_client_endpoint
-
-    public_endpoint = get_s3_public_endpoint()
-    if not public_endpoint:
-        return get_s3_client()
-
-    if _public_s3_client is None or _public_s3_client_endpoint != public_endpoint:
-        from minio import Minio
-
-        access_key, secret_key = derive_s3_credentials()
-        public_secure = os.environ.get("S3_PUBLIC_SECURE", "").strip()
-        secure = (
-            public_secure == "True"
-            if public_secure
-            else os.environ.get("S3_SECURE", "False") == "True"
-        )
-        _public_s3_client = Minio(
-            public_endpoint,
-            access_key=access_key,
-            secret_key=secret_key,
-            secure=secure,
-            region=os.environ.get("S3_REGION") or None,
-            cert_check=os.environ.get("S3_VERIFY_SSL", "True") == "True",
-        )
-        _public_s3_client_endpoint = public_endpoint
-    return _public_s3_client
-
-
 def get_object_prefix():
     return os.environ.get("S3_PREFIX", "").strip("/")
 
@@ -174,25 +139,57 @@ def derive_s3_credentials():
     return "fasttask", digest
 
 
+def _build_client(endpoint, secure):
+    """构造 minio 客户端（延迟导入：RESULT_TYPE=JSON 时不引入该依赖）。"""
+    from minio import Minio
+
+    access_key, secret_key = derive_s3_credentials()
+    return Minio(
+        endpoint,
+        access_key=access_key,
+        secret_key=secret_key,
+        secure=secure,
+        region=os.environ.get("S3_REGION") or None,
+        cert_check=os.environ.get("S3_VERIFY_SSL", "True") == "True",
+    )
+
+
 def get_s3_client():
-    """延迟构建 S3 客户端：RESULT_TYPE=JSON 时不引入 minio 依赖。"""
+    """服务端连接用客户端（内嵌场景为 127.0.0.1 / MASTER_HOST）。"""
     global _s3_client, _s3_client_endpoint
 
     endpoint = get_s3_endpoint()
     if _s3_client is None or _s3_client_endpoint != endpoint:
-        from minio import Minio
-
-        access_key, secret_key = derive_s3_credentials()
-        _s3_client = Minio(
-            endpoint,
-            access_key=access_key,
-            secret_key=secret_key,
-            secure=os.environ.get("S3_SECURE", "False") == "True",
-            region=os.environ.get("S3_REGION") or None,
-            cert_check=os.environ.get("S3_VERIFY_SSL", "True") == "True",
+        _s3_client = _build_client(
+            endpoint, os.environ.get("S3_SECURE", "False") == "True"
         )
         _s3_client_endpoint = endpoint
     return _s3_client
+
+
+def get_public_s3_client():
+    """生成预签名 URL 专用客户端（endpoint 为对外地址）。
+
+    SigV4 签名包含 Host 头，不能“事后把 URL 的主机名换掉”——必须直接以对外地址
+    计算签名，否则对象存储侧会返回 403 SignatureDoesNotMatch。
+    ``presigned_get_object`` 只做签名计算、不发请求，因此对外地址当前不可达也没关系。
+    """
+    global _public_s3_client, _public_s3_client_endpoint
+
+    endpoint = get_s3_public_endpoint()
+    if not endpoint:
+        return get_s3_client()
+
+    if _public_s3_client is None or _public_s3_client_endpoint != endpoint:
+        public_secure = os.environ.get("S3_PUBLIC_SECURE", "").strip()
+        secure = (
+            public_secure == "True"
+            if public_secure
+            else os.environ.get("S3_SECURE", "False") == "True"
+        )
+        _public_s3_client = _build_client(endpoint, secure)
+        _public_s3_client_endpoint = endpoint
+    return _public_s3_client
 
 
 # --------------------------------------------------------------------------- #
@@ -246,7 +243,7 @@ def put_result_object(client, bucket, key, data):
     """上传结果对象；失败按 RESULT_TO_S3_TRIES 重试，仍失败则抛出（fail-fast）。
 
     重试次数在调用时读取（而不是模块导入时），避免模块加载阶段产生副作用；
-    取值合法性由启动校验保证（非法值直接报错，不再静默兑底）。
+    取值合法性由启动校验保证（非法值直接报错，不再静默兜底）。
     """
     tries = int(os.environ.get("RESULT_TO_S3_TRIES", 3))
 
