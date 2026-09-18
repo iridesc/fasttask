@@ -31,7 +31,7 @@ from utils.api_utils import (
     load_redis_task_infos,
     load_user_to_passwd,
 )
-from utils.result_storage import RESULT_TYPE_JSON, RESULT_TYPE_TEXT
+from utils.result_storage import ResultType
 from utils.task_ops import (
     check_task,
     create_task,
@@ -91,7 +91,7 @@ def _flat_signature(model_cls):
 
 def _truncate_run_result(payload: dict, task_name: str) -> dict:
     """run_* 的结果直接进上下文：内联结果过大时截断并引导走异步流程。"""
-    if payload.get("result_type") != RESULT_TYPE_JSON:
+    if payload.get("result_type") != ResultType.json.value:
         return payload
 
     serialized = json.dumps(payload.get("result"), ensure_ascii=False)
@@ -101,7 +101,7 @@ def _truncate_run_result(payload: dict, task_name: str) -> dict:
     return {
         "result_id": payload.get("result_id"),
         "state": payload.get("state"),
-        "result_type": RESULT_TYPE_TEXT,
+        "result_type": ResultType.text.value,
         "truncated": True,
         "result": serialized[:1024],
         "hint": (

@@ -300,7 +300,6 @@ try:
                 section("4. create → check：小结果直接内联")
                 _, created = await call("create_mcp_probe", {"size": 10, "tag": "mcp"})
                 check("create 返回 result_id", bool(created.get("result_id")), created)
-                check("create 给出后续提示", "hint" in created, created)
                 result_id = created["result_id"]
 
                 checked = await wait_task(result_id)

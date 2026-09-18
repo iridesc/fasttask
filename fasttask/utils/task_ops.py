@@ -19,9 +19,7 @@ from celery_app import app as celery_app
 
 from utils.api_utils import TaskState
 from utils.result_storage import (
-    RESULT_TYPE_JSON,
-    RESULT_TYPE_S3,
-    RESULT_TYPE_TEXT,
+    ResultType,
     build_s3_result_response,
     detect_stored_result_type,
 )
@@ -56,49 +54,36 @@ def describe_success(raw_result, result_model=None):
 
     结果已外置到对象存储时只返回引用（含预签名下载地址），不回传内容。
     """
-    if detect_stored_result_type(raw_result) == RESULT_TYPE_S3:
-        return RESULT_TYPE_S3, build_s3_result_response(raw_result)
+    if detect_stored_result_type(raw_result) is ResultType.s3:
+        return ResultType.s3.value, build_s3_result_response(raw_result)
 
     value = raw_result
     if result_model is not None:
         value = result_model.model_validate(raw_result)
     if hasattr(value, "model_dump"):
         value = value.model_dump(mode="json")
-    return RESULT_TYPE_JSON, value
+    return ResultType.json.value, value
 
 
-def _payload(result_id, state, result_type=RESULT_TYPE_JSON, result="", **extra):
+def _payload(result_id, state, result_type=ResultType.json.value, result=""):
     """统一的结果结构。所有返回都经这里构造，避免漏字段。"""
     return {
         "result_id": result_id,
         "state": state,
         "result_type": result_type,
         "result": result,
-        **extra,
     }
 
 
-def _task_kwargs(params_dict):
-    """任务包装层要求带上并发参数键（未指定时为 None）。"""
-    return {**params_dict, "fasttask_concurrency_params": None}
-
-
 def create_task(task_name, params_dict, running_id):
-    """创建异步任务，返回 ``{result_id, state, result_type, result, hint}``。
-
-    与 check / run 保持同一结构（此时还没结果，result 为空）。
-    """
+    """创建异步任务。与 check / run 同一结构（此时还没结果，result 为空）。"""
     async_result = load_task(task_name).apply_async(
         args=(),
-        kwargs=_task_kwargs(params_dict),
+        kwargs=params_dict,
         task_id=f"{running_id}-{uuid.uuid4()}",
         queue=task_name,
     )
-    return _payload(
-        async_result.id,
-        async_result.state,
-        hint=f"用 check_{task_name}(result_id=...) 查询状态与结果",
-    )
+    return _payload(async_result.id, async_result.state)
 
 
 def check_task(result_id, running_id, result_model=None):
@@ -107,8 +92,8 @@ def check_task(result_id, running_id, result_model=None):
         return _payload(
             result_id,
             TaskState.failure.value,
-            RESULT_TYPE_TEXT,
-            f"{result_id} 不存在；当前服务实例标识为 {running_id}",
+            ResultType.text.value,
+            f"{result_id=} not exist, current {running_id=}",
         )
 
     async_result = celery_app.AsyncResult(result_id)
@@ -118,10 +103,10 @@ def check_task(result_id, running_id, result_model=None):
     if state == TaskState.success.value:
         result_type, payload = describe_success(raw_result, result_model)
     elif state == TaskState.failure.value:
-        result_type = RESULT_TYPE_TEXT
-        payload = f"{raw_result!r}\n{async_result.traceback}"
+        result_type = ResultType.text.value
+        payload = f"{raw_result=} {async_result.traceback=}"
     else:
-        result_type = RESULT_TYPE_TEXT
+        result_type = ResultType.text.value
         payload = str(raw_result)
 
     return _payload(result_id, state, result_type, payload)
@@ -138,20 +123,23 @@ def run_task_sync(task_name, params_dict, task_id, result_model=None):
     try:
         eager = load_task(task_name).apply(
             args=(),
-            kwargs=_task_kwargs(params_dict),
+            kwargs=params_dict,
             task_id=task_id,
         )
     except Exception:  # noqa: BLE001 - 任务模块加载失败等
         return _payload(
-            task_id, TaskState.failure.value, RESULT_TYPE_TEXT, traceback.format_exc()
+            task_id,
+            TaskState.failure.value,
+            ResultType.text.value,
+            traceback.format_exc(),
         )
 
     if eager.state != TaskState.success.value:
         return _payload(
             task_id,
             eager.state,
-            RESULT_TYPE_TEXT,
-            f"{eager.result!r}\n{eager.traceback}",
+            ResultType.text.value,
+            f"{eager.result=} {eager.traceback=}",
         )
 
     result_type, payload = describe_success(eager.result, result_model)

@@ -16,8 +16,7 @@ _task_result_model = getattr(_task_module, "Result", None)
 @app.task(bind=True, soft_time_limit={soft_time_limit}, time_limit={time_limit})
 def _{task_name}(self, *args, **kwargs):
 
-    fasttask_concurrency_params = kwargs['fasttask_concurrency_params']
-    kwargs.pop('fasttask_concurrency_params')
+    fasttask_concurrency_params = kwargs.pop('fasttask_concurrency_params', None)
 
     if fasttask_concurrency_params is not None:
         concurrency_key = "fasttask:lock:"+"{task_name}:"+str(fasttask_concurrency_params['concurrency_key'])

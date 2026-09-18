@@ -162,6 +162,7 @@ try:
             "S3_SECRET_KEY": "",
             "RESULT_TYPE": "AUTO",
             "RESULT_AUTO_TO_S3_SIZE": "1",
+            "S3_PRESIGN_EXPIRES": "3600",
             "S3_PREFIX": "embedded",
             "RESULT_TO_S3_TRIES": "3",
         }
@@ -177,7 +178,7 @@ try:
 
     payload = {"hello": "embedded", "size": 1024}
     stored = rs.finalize_task_result(payload, "embedded-selftest-1")
-    check("结果成功外置", rs.detect_stored_result_type(stored) == rs.RESULT_TYPE_S3, stored)
+    check("结果成功外置", rs.detect_stored_result_type(stored) == rs.ResultType.s3, stored)
 
     reference = rs.build_s3_result_response(stored)
     check("生成预签名地址", bool(reference.get("url")), reference)

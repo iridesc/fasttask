@@ -136,15 +136,15 @@ section("4. 结果落存储")
 rs.ensure_bucket()  # 后续用例依赖桶存在
 os.environ["RESULT_TYPE"] = "JSON"
 inline = rs.finalize_task_result({"area": 3.14}, "selftest-inline")
-check("JSON 模式内联", rs.detect_stored_result_type(inline) == rs.RESULT_TYPE_JSON, inline)
+check("JSON 模式内联", rs.detect_stored_result_type(inline) == rs.ResultType.json, inline)
 
 os.environ["RESULT_TYPE"] = "AUTO"
 small = rs.finalize_task_result({"small": True}, "selftest-small")
-check("AUTO 小结果内联", rs.detect_stored_result_type(small) == rs.RESULT_TYPE_JSON, small)
+check("AUTO 小结果内联", rs.detect_stored_result_type(small) == rs.ResultType.json, small)
 
 big_payload = {"data": "x" * 5000, "items": list(range(20))}
 stored = rs.finalize_task_result(big_payload, "selftest-big")
-check("AUTO 大结果外置", rs.detect_stored_result_type(stored) == rs.RESULT_TYPE_S3, stored)
+check("AUTO 大结果外置", rs.detect_stored_result_type(stored) == rs.ResultType.s3, stored)
 check("uri 前缀正确", str(stored.get("uri", "")).startswith(f"s3://{S3_BUCKET}/"), stored)
 check("size_bytes 已记录", stored.get("size_bytes", 0) > 5000, stored)
 
@@ -154,7 +154,7 @@ check(
     set(stored) == {rs.STORAGE_MARKER, "key", "uri", "size_bytes", "sha256"},
     sorted(stored),
 )
-check("标记字段取值", stored.get(rs.STORAGE_MARKER) == rs.RESULT_TYPE_S3, stored)
+check("标记字段取值", stored.get(rs.STORAGE_MARKER) == rs.ResultType.s3.value, stored)
 
 # --------------------------------------------------------------------------- #
 section("6. 预签名下载 + sha256 校验")
@@ -385,8 +385,8 @@ check(
 os.environ["S3_ENDPOINT"] = "custom-endpoint:1234"
 check("显式配置优先", rs.get_s3_endpoint() == "custom-endpoint:1234", rs.get_s3_endpoint())
 
-os.environ["S3_BUCKET"] = ""
-check("桶名默认值", rs.get_bucket() == "fasttask-results", rs.get_bucket())
+os.environ["S3_BUCKET"] = "custom-bucket"
+check("桶名取自环境变量", rs.get_bucket() == "custom-bucket", rs.get_bucket())
 
 sample_key = "demo/key.json"
 os.environ["S3_PUBLIC_ENDPOINT"] = "s3.example.com:9000"

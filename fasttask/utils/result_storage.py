@@ -26,28 +26,36 @@ import io
 import json
 import os
 from datetime import datetime, timedelta, timezone
+from enum import Enum
 
 from retry import retry
 
-# 存储层标记：结果 payload 顶层出现该字段即表示"内容已搬到对象存储"
+
+class ResultStorageMode(Enum):
+    """``RESULT_TYPE`` 的配置取值（决定结果去向）。"""
+
+    json = "JSON"  # 内联在 Celery backend（历史行为）
+    s3 = "S3"  # 一律外置到对象存储
+    auto = "AUTO"  # 超过阈值才外置
+
+
+class ResultType(Enum):
+    """结果的形态（出现在 /check 响应与存储层 payload 里）。"""
+
+    json = "json"  # result 即结果本身
+    s3 = "s3"  # result 是对象存储引用
+    text = "text"  # result 是错误信息或状态文本
+
+
+#: RESULT_TYPE 的合法配置值。非法值一律直接报错，
+#: 静默当成 JSON 会让“以为开了外置、实际没开”这类问题极难排查。
+VALID_RESULT_TYPES = tuple(mode.value for mode in ResultStorageMode)
+
+#: 存储层标记：结果 payload 顶层出现该字段即表示“内容已搬到对象存储”。
+#: 不能用任务自己的 Result 字段做判断（会与业务字段冲突），所以用框架私有键。
 STORAGE_MARKER = "__fasttask_storage__"
 
-RESULT_TYPE_JSON = "json"
-RESULT_TYPE_S3 = "s3"
-RESULT_TYPE_TEXT = "text"
-
-#: RESULT_TYPE 的合法配置值（大写）。非法值一律直接报错，
-#: 静默当成 JSON 会让“以为开了外置、实际没开”这类问题极难排查。
-VALID_RESULT_TYPES = ("JSON", "S3", "AUTO")
-
-_RESULT_TYPE_S3_UPPER = "S3"
-_RESULT_TYPE_AUTO_UPPER = "AUTO"
-
 _CONTENT_TYPE_JSON = "application/json"
-_DEFAULT_AUTO_OFFLOAD_SIZE = 1024 * 1024
-_DEFAULT_PRESIGN_EXPIRES = 24 * 60 * 60
-_DEFAULT_S3_PORT = "9000"
-_DEFAULT_S3_BUCKET = "fasttask-results"
 
 _s3_client = None
 _s3_client_endpoint = None
@@ -58,38 +66,44 @@ _public_s3_client_endpoint = None
 # --------------------------------------------------------------------------- #
 # 配置读取
 # --------------------------------------------------------------------------- #
-def get_configured_result_type():
-    """返回 RESULT_TYPE 的大写取值（默认 ``JSON``）。
+def get_configured_storage_mode():
+    """RESULT_TYPE 的配置取值，默认 ``JSON``。
 
     非法取值直接报错（防御层：启动时 run.py 已经校验过一次）。
     """
-    value = os.environ.get("RESULT_TYPE", "JSON").strip().upper()
-    if value not in VALID_RESULT_TYPES:
+    value = os.environ.get("RESULT_TYPE", ResultStorageMode.json.value).strip().upper()
+    try:
+        return ResultStorageMode(value)
+    except ValueError:
         raise RuntimeError(
             f"RESULT_TYPE must be one of {VALID_RESULT_TYPES}, got {value!r}"
-        )
-    return value
+        ) from None
 
 
 def is_s3_enabled():
     """是否需要对象存储参与（S3 与 AUTO 模式都需要）。"""
-    return get_configured_result_type() in (_RESULT_TYPE_S3_UPPER, _RESULT_TYPE_AUTO_UPPER)
+    return get_configured_storage_mode() in (
+        ResultStorageMode.s3,
+        ResultStorageMode.auto,
+    )
 
 
+# 以下读取的配置项默认值统一在 run.py 的 Env 声明里定义（单一来源），
+# 这里直接取，缺什么就报什么，不再重复维护一份默认值。
 def get_auto_offload_size():
-    return int(os.environ.get("RESULT_AUTO_TO_S3_SIZE", _DEFAULT_AUTO_OFFLOAD_SIZE))
+    return int(os.environ["RESULT_AUTO_TO_S3_SIZE"])
 
 
 def get_presign_expires():
-    return int(os.environ.get("S3_PRESIGN_EXPIRES", _DEFAULT_PRESIGN_EXPIRES))
+    return int(os.environ["S3_PRESIGN_EXPIRES"])
 
 
 def get_bucket():
-    return os.environ.get("S3_BUCKET") or _DEFAULT_S3_BUCKET
+    return os.environ["S3_BUCKET"]
 
 
 def get_s3_port():
-    return os.environ.get("S3_PORT", _DEFAULT_S3_PORT)
+    return os.environ["S3_PORT"]
 
 
 def get_s3_endpoint():
@@ -206,10 +220,10 @@ def build_object_key(result_id, at=None):
 
 
 def should_offload(size_bytes):
-    mode = get_configured_result_type()
-    if mode == _RESULT_TYPE_S3_UPPER:
+    mode = get_configured_storage_mode()
+    if mode is ResultStorageMode.s3:
         return True
-    if mode == _RESULT_TYPE_AUTO_UPPER:
+    if mode is ResultStorageMode.auto:
         return size_bytes > get_auto_offload_size()
     return False
 
@@ -221,7 +235,7 @@ def make_storage_payload(result_id, data):
     """构造写入 Celery backend 的引用对象（内容已上传对象存储）。"""
     key = build_object_key(result_id)
     return {
-        STORAGE_MARKER: RESULT_TYPE_S3,
+        STORAGE_MARKER: ResultType.s3.value,
         "key": key,
         "uri": f"s3://{get_bucket()}/{key}",
         "size_bytes": len(data),
@@ -231,9 +245,9 @@ def make_storage_payload(result_id, data):
 
 def detect_stored_result_type(raw):
     """判断存储层里的结果类型（历史数据没有标记，视为 json）。"""
-    if isinstance(raw, dict) and raw.get(STORAGE_MARKER) == RESULT_TYPE_S3:
-        return RESULT_TYPE_S3
-    return RESULT_TYPE_JSON
+    if isinstance(raw, dict) and raw.get(STORAGE_MARKER) == ResultType.s3.value:
+        return ResultType.s3
+    return ResultType.json
 
 
 # --------------------------------------------------------------------------- #

@@ -30,12 +30,7 @@ from utils.api_utils import (
     SelectiveGZipMiddleware,
     LoggingMiddleware,
 )
-from utils.result_storage import (
-    RESULT_TYPE_JSON,
-    RESULT_TYPE_TEXT,
-    ensure_bucket,
-    is_s3_enabled,
-)
+from utils.result_storage import ResultType, ensure_bucket, is_s3_enabled
 from utils.task_ops import (
     check_task,
     create_task,
@@ -310,7 +305,7 @@ def get_task_apis(task_name):
         # json: result 为任务定义的 Result 模型（历史行为）
         # s3:   result 为对象存储引用（含预签名下载地址）
         # text: result 为错误信息或状态字符串
-        result_type: Literal["json", "s3", "text"] = RESULT_TYPE_JSON
+        result_type: Literal["json", "s3", "text"] = ResultType.json.value
         result: Any = ""
 
     def as_result_info(payload: dict) -> ResultInfo:
@@ -325,7 +320,7 @@ def get_task_apis(task_name):
     def failure_payload() -> dict:
         return {
             "state": TaskState.failure.value,
-            "result_type": RESULT_TYPE_TEXT,
+            "result_type": ResultType.text.value,
             "result": traceback.format_exc(),
         }
 
