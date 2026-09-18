@@ -161,9 +161,12 @@ section("6. 预签名下载 + sha256 校验")
 reference = rs.build_s3_result_response(stored)
 check("生成预签名地址", bool(reference.get("url")), reference)
 check("返回 expires_at", bool(reference.get("expires_at")), reference)
+# url 是相对路径：服务端不需要知道自己的对外地址，由客户端拼上服务地址
+check("url 是相对路径", reference["url"].startswith("/"), reference["url"][:60])
 
+download_url = f"http://{S3_ENDPOINT}{reference['url']}"
 try:
-    with urllib.request.urlopen(reference["url"], timeout=15) as response:
+    with urllib.request.urlopen(download_url, timeout=15) as response:
         downloaded = response.read()
     check("裸 URL 下载成功（无凭据）", True)
     check("字节数与 size_bytes 一致", len(downloaded) == reference["size_bytes"])
@@ -389,24 +392,14 @@ os.environ["S3_BUCKET"] = "custom-bucket"
 check("桶名取自环境变量", rs.get_bucket() == "custom-bucket", rs.get_bucket())
 
 sample_key = "demo/key.json"
-os.environ["S3_PUBLIC_ENDPOINT"] = "s3.example.com:9000"
-public_url = rs.get_public_s3_client().presigned_get_object(
-    rs.get_bucket(), sample_key, expires=timedelta(seconds=60)
-)
-check(
-    "预签名 URL 使用对外地址签名",
-    public_url.startswith("http://s3.example.com:9000/"),
-    public_url[:90],
-)
-os.environ["S3_PUBLIC_ENDPOINT"] = ""
 os.environ["S3_ENDPOINT"] = S3_ENDPOINT  # 明确回到测试端点
-fallback_url = rs.get_public_s3_client().presigned_get_object(
+signed_url = rs.get_s3_client().presigned_get_object(
     rs.get_bucket(), sample_key, expires=timedelta(seconds=60)
 )
 check(
-    "未配置对外地址时回退到服务端地址",
-    fallback_url.startswith(f"http://{S3_ENDPOINT}/"),
-    fallback_url[:90],
+    "签名以内部地址计算（Host 由代理转发时统一重写）",
+    signed_url.startswith(f"http://{S3_ENDPOINT}/"),
+    signed_url[:90],
 )
 
 for key, value in _origin.items():

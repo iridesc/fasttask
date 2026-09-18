@@ -239,17 +239,20 @@ try:
         check("返回 uri", str(reference.get("uri", "")).startswith("s3://"), reference)
         check("size_bytes 合理", (reference.get("size_bytes") or 0) > 5000, reference)
 
+        check("url 是相对路径", reference["url"].startswith("/"), reference["url"][:60])
+        # 相对路径拼上 API 地址 —— 即走 FastTask 端口的代理下载（无需额外端口）
+        download_url = f"{API_BASE}{reference['url']}"
         try:
-            with urllib.request.urlopen(reference["url"], timeout=15) as raw:
+            with urllib.request.urlopen(download_url, timeout=15) as raw:
                 body = raw.read()
-            check("裸 URL 下载成功（无凭据）", True)
+            check("经 API 端口代理下载成功（无凭据）", True)
             check("字节数一致", len(body) == reference["size_bytes"])
             check("sha256 一致", hashlib.sha256(body).hexdigest() == reference["sha256"])
             downloaded = json.loads(body.decode("utf-8"))
             check("内容正确", downloaded.get("payload") == "x" * 5000)
             check("tag 透传", downloaded.get("tag") == "big")
         except Exception as error:  # noqa: BLE001
-            check("裸 URL 下载成功（无凭据）", False, repr(error))
+            check("经 API 端口代理下载成功（无凭据）", False, repr(error))
 
         section("3. Result 结构不符 -> 任务 FAILURE（fail-fast）")
         result_id, response = run_task({"size": 10, "break_result": True})

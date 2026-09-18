@@ -88,7 +88,9 @@ fasttask/
 │   ├── tools.py         # 任务加载、环境变量读取辅助
 │   ├── api_utils.py     # 认证、Worker 状态、文件管理、Flower 代理中间件、日志中间件
 │   ├── result_storage.py # 结果校验/规范化、大结果外置对象存储、预签名下载
+│   ├── s3_proxy.py      # 对象存储透明代理（复用 API 端口，转发时重写 Host）
 │   ├── mcp_server.py    # MCP 适配层：把现有接口翻译成 MCP 工具（跟随 API_* 开关）
+│   ├── task_ops.py      # 创建/查询/同步执行的共享实现（HTTP 与 MCP 共用）
 │   └── redis_lock.py    # Redis 并发控制（严格锁，冲突直接失败）
 └── loaded_tasks/        # 运行时生成（由 load_tasks 创建，gitignore）
 ```
@@ -134,10 +136,7 @@ fasttask/
 - `RESULT_TYPE`：结果存储方式，默认 `JSON`。`S3` 一律上传对象存储、`AUTO` 超过 `RESULT_AUTO_TO_S3_SIZE` 才上传；`S3`/`AUTO` 需要配置 `S3_*`。**开启后会改变 `/check` 响应的 result 形态（破坏性），客户端需先升到 `fasttask_manager >= 0.6.0`**
 - `RESULT_AUTO_TO_S3_SIZE`：`AUTO` 模式阈值（字节），默认 1MB
 - `RESULT_TO_S3_TRIES`：结果上传对象存储的重试次数，默认 3，重试后仍失败则任务失败
-- `S3_ENDPOINT` / `S3_BUCKET` / `S3_PREFIX` / `S3_REGION` / `S3_SECURE` / `S3_VERIFY_SSL`：对象存储连接配置。`S3_ENDPOINT` 不配置时自动指向内嵌对象存储（master/single_node 为 `127.0.0.1:$S3_PORT`，worker 为 `$MASTER_HOST:$S3_PORT`），`S3_BUCKET` 默认 `fasttask-results`
-- `S3_PUBLIC_ENDPOINT`：预签名下载地址对外暴露的地址，容器部署时必须配置（否则指向容器内的 127.0.0.1）
-- `S3_PRESIGN_EXPIRES`：预签名下载地址有效期（秒），默认等于 `SOFT_TIME_LIMIT`
-- `S3_ACCESS_KEY` / `S3_SECRET_KEY`：对象存储凭据，不配置则由 `TASK_QUEUE_PASSWD` 派生（master 与 worker 自动一致）
+- 对象存储（`S3_PORT` / `S3_BUCKET` / `S3_ENDPOINT` / 凭据等）均为**模块内置约定**，默认值已就绪，用户只需 `RESULT_TYPE` 开关。下载地址是相对路径，通过 API 端口的路径代理提供，无需暴露额外端口。可被环境变量覆盖（供测试），但不对外文档化
 - `WORKER_CONCURRENCY`：Worker 并发数，默认 CPU 核数
 - `WORKER_POOL`：Worker 池类型，默认 `prefork`，可选 `gevent`
 - `ENABLED_TASKS` / `DISABLED_TASKS`：控制 Worker 执行的任务白名单/黑名单

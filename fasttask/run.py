@@ -128,21 +128,15 @@ env_type_to_envs = {
         Env("RESULT_TYPE", "JSON"),
         Env("RESULT_AUTO_TO_S3_SIZE", str(1024 * 1024)),
         Env("RESULT_TO_S3_TRIES", "3"),
-        # 对象存储连接：默认指向内嵌的 versitygw（master/single_node 本机，worker 走 MASTER_HOST）
+        # 对象存储：模块内置，均为内部约定，用户只需知道 RESULT_TYPE 开关。
+        # 保留了可被环境变量覆盖的能力（供测试指向自建实例），但不对外文档化。
         Env("S3_PORT", "9000"),
-        Env("S3_ENDPOINT", default_value="", optional=True),
-        # 预签名下载地址对外暴露的地址（容器部署时必配，否则下载方访问不到容器内的 127.0.0.1）
-        Env("S3_PUBLIC_ENDPOINT", default_value="", optional=True),
-        # 对外地址是否使用 https（未配置时继承 S3_SECURE）
-        Env("S3_PUBLIC_SECURE", default_value="", optional=True),
         Env("S3_BUCKET", "fasttask-results"),
+        Env("S3_ENDPOINT", default_value="", optional=True),
         Env("S3_PREFIX", default_value="", optional=True),
         Env("S3_REGION", "us-east-1"),
         Env("S3_SECURE", "False"),
         Env("S3_VERIFY_SSL", "True"),
-        # 不配置则由 TASK_QUEUE_PASSWD 派生，保证 master 与 worker 一致
-        Env("S3_ACCESS_KEY", default_value="", optional=True),
-        Env("S3_SECRET_KEY", default_value="", optional=True),
         Env(
             "S3_PRESIGN_EXPIRES",
             default_value=lambda: int(os.environ.get("SOFT_TIME_LIMIT")),

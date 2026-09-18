@@ -328,11 +328,17 @@ try:
                     raw_text_len,
                 )
 
+                check(
+                    "url 是相对路径",
+                    reference["url"].startswith("/"),
+                    reference["url"][:60],
+                )
+                download_url = f"{API_BASE}{reference['url']}"
                 try:
-                    with urllib.request.urlopen(reference["url"], timeout=15) as resp:
+                    with urllib.request.urlopen(download_url, timeout=15) as resp:
                         body = resp.read()
                     downloaded = json.loads(body.decode("utf-8"))
-                    check("预签名地址可裸下载", downloaded.get("payload") == "x" * 20000)
+                    check("经 API 端口代理下载成功", downloaded.get("payload") == "x" * 20000)
                     check("tag 透传", downloaded.get("tag") == "big")
                 except Exception as error:  # noqa: BLE001
                     check("预签名地址可裸下载", False, repr(error))

@@ -320,47 +320,42 @@ FastTask 内建文件自动过期删除机制，由 Supervisor 管理的独立�
   - `AUTO`：序列化后超过 `RESULT_AUTO_TO_S3_SIZE` 才上传对象存储
 - **RESULT_AUTO_TO_S3_SIZE**：`AUTO` 模式的阈值（字节），默认 `1048576`（1MB）
 - **RESULT_TO_S3_TRIES**：结果上传对象存储的重试次数，默认 `3`；重试后仍失败则该任务失败
-- **S3_PORT**：内嵌对象存储的监听端口，默认 `9000`
-- **S3_ENDPOINT**：对象存储地址。**不配置时自动推导**：master / single_node 使用 `127.0.0.1:$S3_PORT`，worker 使用 `$MASTER_HOST:$S3_PORT`（即内嵌对象存储）。只有改用外部对象存储时才需显式指定
-- **S3_PUBLIC_ENDPOINT**：预签名下载地址对外暴露的地址（域名或 `宿主IP:端口`）。**容器部署时必须配置**，否则下载地址会指向容器内的 `127.0.0.1`，下载方无法访问
-- **S3_BUCKET**：桶名，默认 `fasttask-results`
-- **S3_PREFIX**：对象 key 前缀，多服务共用一个桶时用于隔离，默认为空
-- **S3_REGION**：区域，默认 `us-east-1`
-- **S3_SECURE**：是否使用 HTTPS 连接对象存储，默认 `False`
-- **S3_VERIFY_SSL**：是否校验对象存储的 TLS 证书，默认 `True`（自签证书场景可设为 `False`）
-- **S3_PRESIGN_EXPIRES**：预签名下载地址有效期（秒），默认与 `SOFT_TIME_LIMIT` 相同
-- **S3_ACCESS_KEY** / **S3_SECRET_KEY**：对象存储凭据。**不配置时由 `TASK_QUEUE_PASSWD` 派生**，master 与所有 worker 自动得到同一份凭据，通常无需配置
+
+对象存储是**模块内置**的，不需要额外部署、不需要暴露额外端口、也不需要配置任何连接信息：
+
+```yaml
+environment:
+  - RESULT_TYPE=AUTO        # 就这一个开关
+```
+
+### 内嵌对象存储
+
+镜像内置 [versitygw](https://github.com/versity/versitygw)（Apache-2.0）作为对象存储：
+
+- 仅在提供 API 的节点（`single_node` / `distributed_master`）启动，worker 只作为客户端连过来
+- 数据存放在 `files/fasttask/s3/`（已挂载的 `files` 卷内，不需要额外卷）
+- 凭据由 `TASK_QUEUE_PASSWD` 派生，master 与所有 worker 自动一致，无需配置
+- **通过 API 端口的路径代理对外提供**：客户端用访问 FastTask 的同一个地址即可下载结果，
+  所以部署时只需要映射 API 端口（`9001:443`），不必给对象存储单独开端口
+- master 启动时会自检并自动创建 bucket，配置错误在启动阶段就暴露
+- 过期对象由清理进程按 `FILE_EXPIRATION_SECONDS` 删除（仅 `single_node` / `distributed_master`）
 
 当 `RESULT_TYPE` 为 `S3`/`AUTO` 时，启动会做前置校验：`S3_PRESIGN_EXPIRES` 与 `RESULT_EXPIRES` 都必须小于
 `FILE_EXPIRATION_SECONDS`，避免出现“下载地址有效但对象已被清理”的悬空引用。
 
-### 内嵌对象存储
+### 结果下载地址
 
-镜像内置了 [versitygw](https://github.com/versity/versitygw)（Apache-2.0）作为 S3 兼容对象存储，
-无需额外部署就能启用结果外置：
+外置结果的 `result.url` 是**相对路径**（形如 `/fasttask-results/20260918/xxx.json?X-Amz-...`）：
+服务端不需要知道自己的对外地址，由调用方拼上服务地址即可：
 
-- 仅在提供 API 的节点（`single_node` / `distributed_master`）启动，worker 只作为客户端连过来
-- 数据存放在 `files/fasttask/s3/`（即已挂载的 `files` 卷内，无需额外卷）
-- 凭据默认由 `TASK_QUEUE_PASSWD` 派生，master 与所有 worker 自动得到同一份，**无需任何额外配置**
-- master 启动 `uvicorn` 时会自检并自动创建 bucket；配置错误会在启动阶段就暴露
-- 过期结果对象由清理进程按 `FILE_EXPIRATION_SECONDS` 删除（只在 `single_node` / `distributed_master` 执行）
-
-因此启用外置存储只需一个环境变量：
-
-```yaml
-environment:
-  - RESULT_TYPE=AUTO        # 或 S3
+```bash
+curl -s -o result.json "https://<fasttask 地址><result.url>"
+jq . result.json
 ```
 
-注意：预签名下载地址由客户端直接访问对象存储，所以容器部署时还需要：
-
-1. **映射对象存储端口**：`ports: ["9000:9000"]`（端口可改）
-2. **告诉框架对外地址**：`S3_PUBLIC_ENDPOINT=<客户端可达的宿主地址或域名>:<映射后的端口>`
-
-如果客户端与服务端在同一网络（如内网直连、无容器隔离），不配 `S3_PUBLIC_ENDPOINT` 也能直接使用。
-
-要改用外部对象存储（MinIO / Ceph / 云厂商 S3 兼容服务）时，显式配置 `S3_ENDPOINT`、`S3_ACCESS_KEY`、
-`S3_SECRET_KEY`（以及必要的 `S3_PUBLIC_ENDPOINT`）即可，框架侧无需改动。
+- 客户端（`fasttask_manager >= 0.6.0`）会自动拼接并下载，调用方拿到的始终是真实结果
+- AI 客户端（MCP）的工具说明里给出了同样的拼接方式
+- 下载地址有时效，过期后重新 `check` 一次即可获得新地址
 
 ### 升级顺序（结果外置是破坏性变更）
 
@@ -373,13 +368,6 @@ environment:
 2. 再在服务端开启 `RESULT_TYPE=S3` 或 `AUTO`
 
 因此 `RESULT_TYPE` 默认保持 `JSON`：未显式配置时行为与历史版本完全一致。
-
-结果查询接口（`/check/{task_name}`）新增 `result_type` 字段标识 `result` 的类型：
-
-- `json`：`result` 为任务定义的 `Result` 结构（与历史版本一致）
-- `s3`：`result` 为对象存储引用（`uri` / `url` / `size_bytes` / `sha256` / `expires_at`），
-  `url` 是可直接下载的预签名地址，**无需额外凭据**
-- `text`：`result` 为错误信息（失败时为完整 traceback）或任务状态字符串
 
 ## 接口控制
 

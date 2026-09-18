@@ -307,8 +307,8 @@ FastTask 默认把结果内联在 Celery backend 里（`RESULT_TYPE=JSON`，与�
 
 - `RESULT_TYPE=AUTO`：序列化后超过 `RESULT_AUTO_TO_S3_SIZE`（默认 1MB）才外置
 - `RESULT_TYPE=S3`：一律外置
-- 镜像内置对象存储（versitygw），无需额外部署；容器部署记得映射对象存储端口并配置
-  `S3_PUBLIC_ENDPOINT`（预签名下载地址的对外地址）
+- 对象存储**模块内置**（versitygw），无需额外部署、无需暴露额外端口、无需配置连接信息；
+  下载地址是相对路径，通过 API 端口的路径代理对外提供
 
 开启后 `/check` 的响应形态会变：
 
@@ -318,7 +318,8 @@ FastTask 默认把结果内联在 Celery backend 里（`RESULT_TYPE=JSON`，与�
 
 // result_type=s3（外置，只回引用）
 {"id": "...", "state": "SUCCESS", "result_type": "s3",
- "result": {"uri": "s3://...", "url": "https://...预签名地址", "size_bytes": 14680064, "sha256": "..."}}
+ "result": {"uri": "s3://...", "url": "/fasttask-results/20260918/xxx.json?X-Amz-...",
+            "size_bytes": 14680064, "sha256": "..."}}
 ```
 
 **这是破坏性变更**：旧客户端会把引用当成结果用（而且不会报错）。因此升级必须按顺序：

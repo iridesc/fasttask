@@ -182,9 +182,13 @@ try:
 
     reference = rs.build_s3_result_response(stored)
     check("生成预签名地址", bool(reference.get("url")), reference)
-    with urllib.request.urlopen(reference["url"], timeout=15) as response:
+    check("url 是相对路径", reference["url"].startswith("/"), reference["url"][:60])
+    # 本用例只起对象存储、没有 API 代理，因此直接拼内嵌服务地址访问
+    with urllib.request.urlopen(
+        f"http://127.0.0.1:{S3_PORT}{reference['url']}", timeout=15
+    ) as response:
         body = response.read()
-    check("预签名裸 URL 可下载", json.loads(body.decode("utf-8")) == payload, body[:120])
+    check("预签名地址可下载", json.loads(body.decode("utf-8")) == payload, body[:120])
 
     # ----------------------------------------------------------------------- #
     section("5. supervisord 配置组装")

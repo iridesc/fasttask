@@ -59,10 +59,11 @@ _MCP_INSTRUCTIONS = """FastTask 异步任务平台。
 典型流程：create_<task> 拿到 result_id → check_<task> 轮询 → 取回结果。
 
 重要：任务结果可能很大。当 check 返回的 result_type 为 "s3" 时，
-result.url 是可直接下载的预签名地址，请先用 shell 下载到本地、
-再用 jq 等工具按需提取字段，不要直接把整个结果读入上下文：
+result.url 是一个相对路径（形如 /fasttask-results/20260918/xxx.json?X-Amz-...），
+把它拼在本 FastTask 服务的地址后面即可下载。请下载到本地后再用 jq 等工具
+按需提取字段，不要把整个结果读入上下文：
 
-    curl -s -o result.json "<result.url>"
+    curl -s -o result.json "https://<fasttask 地址><result.url>"
     jq '.some_field' result.json
 """
 
@@ -157,11 +158,12 @@ def _register_check_tool(mcp, task_name, result_model, running_id_getter):
         "SUCCESS(成功) / FAILURE(失败) / REVOKED(已撤销)\n"
         "- result_type：json / s3 / text，决定 result 的含义；\n"
         "  json → result 即任务结果；text → result 为错误信息（含完整 traceback）；\n"
-        "  s3 → 结果已外置，result.url 是预签名下载地址。\n"
+        "  s3 → 结果已外置，result.url 是预签名下载路径。\n"
         "\n"
-        "重要：结果可能非常大（几十 MB）。当 result_type=s3 时，"
-        "务必先把结果下载到本地再解析，不要直接读取内容：\n"
-        '  curl -s -o result.json "<result.url>"\n'
+        "重要：结果可能非常大（几十 MB）。当 result_type=s3 时，result.url 是相对\n"
+        "路径（形如 /fasttask-results/20260918/xxx.json?X-Amz-...），请与 FastTask\n"
+        "服务地址拼接后下载到本地再解析，不要直接读取内容：\n"
+        '  curl -s -o result.json "https://<fasttask 地址><result.url>"\n'
         "  jq '.some_field' result.json\n"
         "下载地址有时效，过期后重新调用本工具即可获得新地址。"
     )

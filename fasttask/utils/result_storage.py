@@ -27,6 +27,7 @@ import json
 import os
 from datetime import datetime, timedelta, timezone
 from enum import Enum
+from urllib.parse import urlparse
 
 from retry import retry
 
@@ -59,8 +60,6 @@ _CONTENT_TYPE_JSON = "application/json"
 
 _s3_client = None
 _s3_client_endpoint = None
-_public_s3_client = None
-_public_s3_client_endpoint = None
 
 
 # --------------------------------------------------------------------------- #
@@ -121,16 +120,6 @@ def get_s3_endpoint():
     return f"{os.environ.get('MASTER_HOST', '127.0.0.1')}:{get_s3_port()}"
 
 
-def get_s3_public_endpoint():
-    """预签名下载地址对外暴露的地址（客户端访问用）。
-
-    容器部署时服务端连的是容器内的 `127.0.0.1:9000`，而下载方在容器外，
-    因此预签名 URL 需要以对外可达的地址（域名或宿主 IP:端口）来生成。
-    未配置时沿用 `S3_ENDPOINT`（适用于客户端与服务端同网络的场景）。
-    """
-    return (os.environ.get("S3_PUBLIC_ENDPOINT") or "").strip()
-
-
 def get_object_prefix():
     return os.environ.get("S3_PREFIX", "").strip("/")
 
@@ -169,7 +158,11 @@ def _build_client(endpoint, secure):
 
 
 def get_s3_client():
-    """服务端连接用客户端（内嵌场景为 127.0.0.1 / MASTER_HOST）。"""
+    """服务端连接用客户端（内嵌对象存储地址）。
+
+    预签名地址也用它计算：Host 固定为内嵌地址，由代理在转发时统一重写，
+    因此下载方用什么地址访问都不影响验签。
+    """
     global _s3_client, _s3_client_endpoint
 
     endpoint = get_s3_endpoint()
@@ -179,31 +172,6 @@ def get_s3_client():
         )
         _s3_client_endpoint = endpoint
     return _s3_client
-
-
-def get_public_s3_client():
-    """生成预签名 URL 专用客户端（endpoint 为对外地址）。
-
-    SigV4 签名包含 Host 头，不能“事后把 URL 的主机名换掉”——必须直接以对外地址
-    计算签名，否则对象存储侧会返回 403 SignatureDoesNotMatch。
-    ``presigned_get_object`` 只做签名计算、不发请求，因此对外地址当前不可达也没关系。
-    """
-    global _public_s3_client, _public_s3_client_endpoint
-
-    endpoint = get_s3_public_endpoint()
-    if not endpoint:
-        return get_s3_client()
-
-    if _public_s3_client is None or _public_s3_client_endpoint != endpoint:
-        public_secure = os.environ.get("S3_PUBLIC_SECURE", "").strip()
-        secure = (
-            public_secure == "True"
-            if public_secure
-            else os.environ.get("S3_SECURE", "False") == "True"
-        )
-        _public_s3_client = _build_client(endpoint, secure)
-        _public_s3_client_endpoint = endpoint
-    return _public_s3_client
 
 
 # --------------------------------------------------------------------------- #
@@ -308,11 +276,15 @@ def _iso_utc(dt):
     return dt.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-def build_s3_result_response(payload, presign=True):
-    """把存储层 payload 转成返回给客户端的结果引用（含预签名下载地址）。
+def build_s3_result_response(payload):
+    """把存储层 payload 转成返回给客户端的结果引用。
 
-    预签名失败不阻塞状态查询：``url`` 置空并记录日志，
-    客户端仍可凭 ``uri`` 自行取数。
+    ``url`` 是**相对路径**（形如 ``/<bucket>/<key>?X-Amz-...``）：客户端拼上自己
+    访问 FastTask 的地址即可下载，所以服务端不必知道对外地址，也不需要额外暴露
+    对象存储端口（代理会在转发时把 Host 统一改回内部地址）。
+
+    预签名失败不阻塞状态查询：``url`` 置空并记录 ``url_error``，
+    避免调用方把“引用存在但不可下载”误当成内联结果。
     """
     response = {
         "uri": payload.get("uri"),
@@ -320,19 +292,16 @@ def build_s3_result_response(payload, presign=True):
         "sha256": payload.get("sha256"),
         "url": None,
         "expires_at": None,
-        # 预签名失败时填写，供调用方判断“引用存在但不可下载”
         "url_error": None,
     }
-    if not presign:
-        return response
 
     expires = get_presign_expires()
     try:
-        # 用对外地址签名（而非事后替换主机名），保证签名与下载方发出的 Host 一致
-        client = get_public_s3_client()
-        response["url"] = client.presigned_get_object(
+        signed_url = get_s3_client().presigned_get_object(
             get_bucket(), payload["key"], expires=timedelta(seconds=expires)
         )
+        parsed = urlparse(signed_url)
+        response["url"] = f"{parsed.path}?{parsed.query}"
         response["expires_at"] = _iso_utc(
             datetime.now(timezone.utc) + timedelta(seconds=expires)
         )

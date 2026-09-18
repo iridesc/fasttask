@@ -30,7 +30,14 @@ from utils.api_utils import (
     SelectiveGZipMiddleware,
     LoggingMiddleware,
 )
-from utils.result_storage import ResultType, ensure_bucket, is_s3_enabled
+from utils.result_storage import (
+    ResultType,
+    ensure_bucket,
+    get_bucket,
+    get_s3_endpoint,
+    is_s3_enabled,
+)
+from utils.s3_proxy import S3ProxyMiddleware
 from utils.task_ops import (
     check_task,
     create_task,
@@ -147,10 +154,15 @@ app = FastAPI(
 #   more_body=True 的分块再转发。GZip 若在外层就只能看到这种"伪流式"响应，
 #   既要多缓冲一份完整 body，还会被 max_buffer 上限误伤。
 if get_bool_env("RESPONSE_COMPRESS"):
+    # 对象存储响应直传（大文件无收益），与 /download、/flower 一同跳过压缩
+    exclude_prefixes = ["/download", "/flower"]
+    if is_s3_enabled():
+        exclude_prefixes.append(f"/{get_bucket()}/")
     app.add_middleware(
         SelectiveGZipMiddleware,
         minimum_size=1000,
         compresslevel=int(os.environ["RESPONSE_COMPRESS_LEVEL"]),
+        exclude_prefixes=tuple(exclude_prefixes),
     )
 
 if get_bool_env("DEBUG"):
@@ -162,6 +174,15 @@ if get_bool_env("FLOWER_ENABLED"):
 if _mcp_app is not None:
     # MCP 子应用自带认证（复用 FastTask 既有的 HTTP Basic 凭据）
     app.mount(MCP_PATH, _mcp_app)
+
+if is_s3_enabled():
+    # 最后注册 = 最外层：对象存储请求直接转发，不进入 gzip / 日志等中间件。
+    # endpoint 与预签名的 Host 同源，因此客户端用哪个地址访问都能验签通过。
+    app.add_middleware(
+        S3ProxyMiddleware,
+        bucket=get_bucket(),
+        endpoint=get_s3_endpoint(),
+    )
 
 if get_bool_env("API_DOCS"):
 
