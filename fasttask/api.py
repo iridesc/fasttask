@@ -319,7 +319,18 @@ def get_task_apis(task_name):
         ):
 
             try:
-                result = Result.model_validate(task(**params.model_dump()))
+                # 同步执行：apply() 本地跑并显式给 task_id。
+                # 任务包装层对 is_eager 的执行不做结果外置（run 的语义就是直接拿结果），
+                # 因此这里直接按 Result 校验即可。
+                eager = task.apply(
+                    args=(),
+                    kwargs=params.model_dump(),
+                    task_id=f"{app.state.RUNNING_ID}-{uuid.uuid4()}",
+                )
+                if eager.state != TaskState.success.value:
+                    raise Exception(f"{eager.result!r}\n{eager.traceback}")
+
+                result = Result.model_validate(eager.result)
                 state = TaskState.success.value
                 result_type = RESULT_TYPE_JSON
             except Exception:

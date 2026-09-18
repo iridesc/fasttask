@@ -35,11 +35,14 @@ def _{task_name}(self, *args, **kwargs):
     else:
         raw_result = _task_func(*args, **kwargs)
 
-    # 统一收口：Result 结构校验（fail-fast）+ 规范化 + 按 RESULT_TYPE 决定去向
+    # 统一收口：Result 结构校验（fail-fast）+ 规范化 + 按 RESULT_TYPE 决定去向。
+    # 同步执行（/run 与 MCP 的 run_* 走 apply，request.is_eager=True）时结果即时消费，
+    # 不做外置，以保持“run 直接返回结果”的语义。
     return finalize_task_result(
         raw_result,
         task_id=self.request.id,
         result_model=_task_result_model,
+        offload=not self.request.is_eager and self.request.id is not None,
     )
 """
 

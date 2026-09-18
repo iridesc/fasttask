@@ -246,10 +246,12 @@ def put_result_object(client, bucket, key, data):
     )
 
 
-def finalize_task_result(raw, task_id, result_model=None):
+def finalize_task_result(raw, task_id, result_model=None, offload=True):
     """任务返回时的收口：结构校验 → 规范化 → 按配置决定存储位置。
 
     ``result_model`` 为空（任务未定义 Result）时跳过校验，仅做规范化尝试。
+    ``offload=False``（同步执行场景：结果即时消费）时只做校验与规范化，
+    不写入对象存储 —— /run 的语义是“直接拿到结果”。
     """
     if result_model is not None:
         payload = result_model.model_validate(raw).model_dump(mode="json")
@@ -258,7 +260,7 @@ def finalize_task_result(raw, task_id, result_model=None):
     else:
         payload = raw
 
-    if not is_s3_enabled():
+    if not offload or not is_s3_enabled():
         return payload
 
     data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
