@@ -304,6 +304,61 @@ expect_fail(
     "RESULT_TO_S3_TRIES must be >= 1",
 )
 
+# 非法值必须直接报错，不能被静默当成 JSON 处理
+expect_fail({"RESULT_TYPE": "S33"}, "RESULT_TYPE must be one of")
+expect_fail({"RESULT_TYPE": "MINIO"}, "RESULT_TYPE must be one of")
+expect_fail({"RESULT_TYPE": "s3x"}, "RESULT_TYPE must be one of")
+expect_fail(
+    {
+        "RESULT_TYPE": "AUTO",
+        "S3_ENDPOINT": "x:9000",
+        "S3_BUCKET": "b",
+        "RESULT_TO_S3_TRIES": "abc",
+    },
+    "RESULT_TO_S3_TRIES must be an integer",
+)
+expect_fail(
+    {
+        "RESULT_TYPE": "AUTO",
+        "S3_ENDPOINT": "x:9000",
+        "S3_BUCKET": "b",
+        "RESULT_TO_S3_TRIES": "3",
+        "S3_PORT": "70000",
+    },
+    "S3_PORT must be within 1-65535",
+)
+expect_fail(
+    {
+        "RESULT_TYPE": "AUTO",
+        "S3_ENDPOINT": "x:9000",
+        "S3_BUCKET": "b",
+        "RESULT_TO_S3_TRIES": "3",
+        "S3_PORT": "9000",
+        "S3_PRESIGN_EXPIRES": "0",
+    },
+    "S3_PRESIGN_EXPIRES must be > 0",
+)
+expect_fail(
+    {
+        "RESULT_TYPE": "AUTO",
+        "S3_ENDPOINT": "x:9000",
+        "S3_BUCKET": "b",
+        "RESULT_TO_S3_TRIES": "3",
+        "S3_PORT": "9000",
+        "S3_PRESIGN_EXPIRES": "60",
+        "RESULT_AUTO_TO_S3_SIZE": "-1",
+    },
+    "RESULT_AUTO_TO_S3_SIZE must be >= 0",
+)
+
+# JSON 模式下 S3_* 不生效，不应因无关配置妨碍启动
+os.environ.update({"RESULT_TYPE": "JSON", "S3_PORT": "not-a-port"})
+try:
+    run.check_result_storage_envs()
+    check("JSON 模式不校验 S3 相关配置", True)
+except Exception as error:  # noqa: BLE001
+    check("JSON 模式不校验 S3 相关配置", False, error)
+
 section("9b. 对象存储地址/桶名的默认推导（内嵌场景开箱即用）")
 _origin = {
     key: os.environ.get(key)

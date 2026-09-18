@@ -413,12 +413,13 @@ def build_mcp_server(task_names, running_id_getter):
 
 
 def _load_task_model(task_name, name):
-    """取任务模块里的 Params / Result 模型；不存在时返回 None。"""
-    try:
-        module = import_module(package="tasks", name=f".{task_name}")
-    except Exception as error:  # noqa: BLE001
-        print(f"FastTask ---> mcp: 无法导入任务 {task_name}: {error!r}")
-        return None
+    """取任务模块里的 Params / Result 模型；属性不存在时返回 None。
+
+    导入失败不吞异常：任务模块加载不了意味着服务本身有问题，
+    与 api.py 注册路由时的行为保持一致（在这里就报错，
+    而不是默默生成一个“参数为空的工具”让人去猜）。
+    """
+    module = import_module(package="tasks", name=f".{task_name}")
     return getattr(module, name, None)
 
 

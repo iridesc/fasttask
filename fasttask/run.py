@@ -3,6 +3,7 @@ import os
 import shutil
 import subprocess
 
+from utils.result_storage import VALID_RESULT_TYPES
 from utils.tools import load_tasks
 
 log_prefix = "FastTask --->"
@@ -356,24 +357,51 @@ def check_envs():
     check_result_storage_envs()
 
 
-def check_result_storage_envs():
-    """结果存储层的前置校验（RESULT_TYPE=S3/AUTO 时生效）。
+def _int_env(key, default):
+    """读取整数环境变量；无法解析时直接报错（不静默用默认值）。"""
+    raw = os.environ.get(key, str(default))
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        raise Exception(f"{key} must be an integer, got {raw!r}") from None
 
-    S3_ENDPOINT / S3_BUCKET 都具备默认值（指向内嵌对象存储），无需强制配置。
+
+def check_result_storage_envs():
+    """结果存储层的前置校验。
+
+    非法配置一律直接报错：静默兑底（例如把拼错的 ``RESULT_TYPE`` 当成 JSON）
+    会让“以为开了外置、实际没开”这类问题极难排查。
+
+    ``S3_ENDPOINT`` / ``S3_BUCKET`` 具备默认值（指向内嵌对象存储），无需强制配置。
     """
     result_type = os.environ.get("RESULT_TYPE", "JSON").strip().upper()
+    if result_type not in VALID_RESULT_TYPES:
+        raise Exception(
+            f"RESULT_TYPE must be one of {VALID_RESULT_TYPES}, got {result_type!r}"
+        )
 
-    if result_type not in ("S3", "AUTO"):
+    if result_type == "JSON":
+        # 不启用对象存储：S3_* 不生效，不校验
         return
 
-    # 上传重试次数必须为正，否则 @retry 语义不成立
-    tries = int(os.environ.get("RESULT_TO_S3_TRIES", 3))
+    tries = _int_env("RESULT_TO_S3_TRIES", 3)
     if tries < 1:
         raise Exception(f"RESULT_TO_S3_TRIES must be >= 1, got {tries}")
 
+    auto_size = _int_env("RESULT_AUTO_TO_S3_SIZE", 1024 * 1024)
+    if auto_size < 0:
+        raise Exception(f"RESULT_AUTO_TO_S3_SIZE must be >= 0, got {auto_size}")
+
+    s3_port = _int_env("S3_PORT", 9000)
+    if not 0 < s3_port < 65536:
+        raise Exception(f"S3_PORT must be within 1-65535, got {s3_port}")
+
+    file_expiration = _int_env("FILE_EXPIRATION_SECONDS", 0)
+
     # 预签名有效期不得超过对象保留期，否则会出现“URL 有效但对象已删”的悬空地址
-    presign_expires = int(os.environ.get("S3_PRESIGN_EXPIRES", 0))
-    file_expiration = int(os.environ.get("FILE_EXPIRATION_SECONDS", 0))
+    presign_expires = _int_env("S3_PRESIGN_EXPIRES", 0)
+    if presign_expires <= 0:
+        raise Exception(f"S3_PRESIGN_EXPIRES must be > 0, got {presign_expires}")
     if presign_expires >= file_expiration:
         raise Exception(
             "S3_PRESIGN_EXPIRES must be less than FILE_EXPIRATION_SECONDS: "
@@ -383,7 +411,7 @@ def check_result_storage_envs():
 
     # 结果引用（Redis）必须早于对象清理（对象存储）失效，
     # 否则 check 会返回一个指向已被删除对象的引用。
-    result_expires = int(os.environ.get("RESULT_EXPIRES", 0))
+    result_expires = _int_env("RESULT_EXPIRES", 0)
     if result_expires >= file_expiration:
         raise Exception(
             "RESULT_EXPIRES must be less than FILE_EXPIRATION_SECONDS: "

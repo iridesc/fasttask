@@ -36,6 +36,10 @@ RESULT_TYPE_JSON = "json"
 RESULT_TYPE_S3 = "s3"
 RESULT_TYPE_TEXT = "text"
 
+#: RESULT_TYPE 的合法配置值（大写）。非法值一律直接报错，
+#: 静默当成 JSON 会让“以为开了外置、实际没开”这类问题极难排查。
+VALID_RESULT_TYPES = ("JSON", "S3", "AUTO")
+
 _RESULT_TYPE_S3_UPPER = "S3"
 _RESULT_TYPE_AUTO_UPPER = "AUTO"
 
@@ -55,8 +59,16 @@ _public_s3_client_endpoint = None
 # 配置读取
 # --------------------------------------------------------------------------- #
 def get_configured_result_type():
-    """返回 RESULT_TYPE 的大写取值，默认为 JSON（保持历史行为）。"""
-    return os.environ.get("RESULT_TYPE", "JSON").strip().upper()
+    """返回 RESULT_TYPE 的大写取值（默认 ``JSON``）。
+
+    非法取值直接报错（防御层：启动时 run.py 已经校验过一次）。
+    """
+    value = os.environ.get("RESULT_TYPE", "JSON").strip().upper()
+    if value not in VALID_RESULT_TYPES:
+        raise RuntimeError(
+            f"RESULT_TYPE must be one of {VALID_RESULT_TYPES}, got {value!r}"
+        )
+    return value
 
 
 def is_s3_enabled():
@@ -230,20 +242,25 @@ def detect_stored_result_type(raw):
 # --------------------------------------------------------------------------- #
 # 上传（worker 侧）
 # --------------------------------------------------------------------------- #
-@retry(
-    tries=max(int(os.environ.get("RESULT_TO_S3_TRIES", 3)), 1),
-    delay=1,
-    backoff=2,
-)
 def put_result_object(client, bucket, key, data):
-    """上传结果对象；失败按 RESULT_TO_S3_TRIES 重试，仍失败则抛出（fail-fast）。"""
-    client.put_object(
-        bucket,
-        key,
-        io.BytesIO(data),
-        length=len(data),
-        content_type=_CONTENT_TYPE_JSON,
-    )
+    """上传结果对象；失败按 RESULT_TO_S3_TRIES 重试，仍失败则抛出（fail-fast）。
+
+    重试次数在调用时读取（而不是模块导入时），避免模块加载阶段产生副作用；
+    取值合法性由启动校验保证（非法值直接报错，不再静默兑底）。
+    """
+    tries = int(os.environ.get("RESULT_TO_S3_TRIES", 3))
+
+    @retry(tries=tries, delay=1, backoff=2)
+    def attempt():
+        client.put_object(
+            bucket,
+            key,
+            io.BytesIO(data),
+            length=len(data),
+            content_type=_CONTENT_TYPE_JSON,
+        )
+
+    attempt()
 
 
 def finalize_task_result(raw, task_id, result_model=None, offload=True):
@@ -292,6 +309,8 @@ def build_s3_result_response(payload, presign=True):
         "sha256": payload.get("sha256"),
         "url": None,
         "expires_at": None,
+        # 预签名失败时填写，供调用方判断“引用存在但不可下载”
+        "url_error": None,
     }
     if not presign:
         return response
@@ -306,7 +325,8 @@ def build_s3_result_response(payload, presign=True):
         response["expires_at"] = _iso_utc(
             datetime.now(timezone.utc) + timedelta(seconds=expires)
         )
-    except Exception as error:  # noqa: BLE001 - 预签名失败降级为不带 url
+    except Exception as error:  # noqa: BLE001 - 不阻塞状态查询，但必须明确暴露
+        response["url_error"] = repr(error)
         print(f"FastTask ---> presign failed for {payload.get('key')!r}: {error!r}")
 
     return response
