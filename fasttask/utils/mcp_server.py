@@ -260,12 +260,20 @@ def _register_revoke_tool(mcp, running_id_getter):
 def build_mcp_server(task_names, running_id_getter):
     """构建 FastMCP 实例，并按 API_* 开关动态注册任务工具。"""
     from mcp.server.fastmcp import FastMCP
+    from mcp.server.transport_security import TransportSecuritySettings
 
     mcp = FastMCP(
         MCP_SERVER_NAME,
         instructions=_MCP_INSTRUCTIONS,
         stateless_http=True,  # 多 uvicorn worker 下必须无状态
         json_response=True,  # 纯 JSON 响应，避免 SSE 被中间件缓冲
+        # FastMCP 默认的 DNS rebinding 保护只放行 localhost，而 FastTask 实际
+        # 部署在容器/K8s/反代后面，客户端只用 IP 或域名访问，任何非本机请求
+        # 都会被拦成 421 Invalid Host header，MCP 等于不可用。API 层本身
+        # 已有认证（或按内部约定无需认证），这里不再叠加 Host 白名单。
+        transport_security=TransportSecuritySettings(
+            enable_dns_rebinding_protection=False
+        ),
     )
     # 挂载到 FastAPI 的 /mcp 下，子应用内部路径从根开始
     mcp.settings.streamable_http_path = "/"
