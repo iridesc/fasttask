@@ -381,6 +381,47 @@ environment:
 - **API_FILE_UPLOAD**：是否启用 `/upload` 文件上传接口
 - **API_STATUS_INFO**：是否启用 `/status_info` 状态查询接口
 - **API_DOCS**：是否启用 `/docs` Swagger 文档页面
+- **API_MCP**：是否启用 [MCP 端点](#mcp-端点)，默认 `False`
+
+## MCP 端点
+
+FastTask 可以把现有接口自动翻译成 MCP 工具，供 AI 客户端直接调用。
+
+- **API_MCP**：是否启用 MCP 端点，默认 `False`
+
+启用后端点为 `https://<host>:<port>/mcp`，用 HTTP 传输接入：
+
+```bash
+claude mcp add --transport http fasttask https://10.0.0.1:9001/mcp \
+  --header "Authorization: Basic $(echo -n 'user:passwd' | base64)"
+```
+
+工具按 `API_*` 开关动态注册，新增任务无需任何额外改动（任务文件放进 `tasks/` 即自动出现）：
+
+| 工具 | 对应接口 | 启用条件 |
+|---|---|---|
+| `create_<task>` | `POST /create/<task>` | `API_CREATE` |
+| `check_<task>` | `GET /check/<task>` | `API_CHECK` |
+| `run_<task>` | `POST /run/<task>` | `API_RUN` |
+| `fasttask_status` | `POST /status_info` | `API_STATUS_INFO` |
+| `fasttask_revoke` | `POST /revoke` | `API_REVOKE` |
+
+工具参数直接来自任务自己的 `Params` 模型（字段说明、默认值、约束都会带到 MCP schema 里）；
+任务的模块 docstring 会作为工具说明的一部分，建议给每个任务写一句用途说明。
+
+`check_*` 的返回值遵循 `/check` 的 `result_type` 约定：小结果直接返回；
+外置到对象存储的结果只返回引用与预签名下载地址，调用方下载到本地后再解析，
+避免把几十 MB 的结果灌进模型上下文。
+
+认证复用 FastTask 既有的凭据：`user_to_passwd.json` 存在时要求 HTTP Basic，
+不存在时匿名放行（与其它接口完全一致）。
+
+注意事项：
+
+- 客户端访问 `/mcp` 时会经历一次 307 跳转（`/mcp` → `/mcp/`），官方 MCP 客户端会自动跟随
+- 容器使用自签证书时，客户端需要信任该证书（如 Node 系客户端设置 `NODE_EXTRA_CA_CERTS`）
+- MCP 传输为无状态模式：任务状态由 `result_id` 定位，服务重启后依然可用
+- 工具数量随任务数增长（每个任务最多 3 个），可用 `ENABLED_TASKS` 控制暴露范围
 
 ## 响应压缩
 

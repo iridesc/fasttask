@@ -91,6 +91,28 @@ class BaseConcurrencyParams(BaseModel):
     )
 
 
+def app_state_running_id():
+    """延迟读取 RUNNING_ID：MCP 工具被调用时 FastAPI app 已创建完成。"""
+    return app.state.RUNNING_ID
+
+
+# MCP 端点（可选）：把既有接口翻译成 MCP 工具，不引入新的状态或机制
+_mcp_server = None
+_mcp_app = None
+if get_bool_env("API_MCP"):
+    try:
+        from utils.mcp_server import MCP_PATH, build_mcp_server, wrap_mcp_app
+    except ImportError as error:
+        raise RuntimeError(
+            "API_MCP=True 需要 mcp 依赖，请安装：pip install 'mcp>=1.30,<2'"
+        ) from error
+
+    _mcp_server = build_mcp_server(
+        LOADED_TASKS, running_id_getter=lambda: app_state_running_id()
+    )
+    _mcp_app = wrap_mcp_app(_mcp_server.streamable_http_app())
+
+
 @contextlib.asynccontextmanager
 async def lifespan(app: FastAPI):
     print("Application startup: Initializing RUNNING_ID...")
@@ -98,7 +120,13 @@ async def lifespan(app: FastAPI):
     if is_s3_enabled():
         # 对象存储自检：配置错误在这里就暴露，而不是等任务跑完上传时才失败
         await asyncio.to_thread(ensure_bucket)
-    yield
+
+    if _mcp_server is not None:
+        # FastAPI 不会自动运行 mount 子应用的 lifespan，流式会话管理器必须显式托管
+        async with _mcp_server.session_manager.run():
+            yield
+    else:
+        yield
 
 
 app = FastAPI(
@@ -132,6 +160,10 @@ if get_bool_env("DEBUG"):
 
 if get_bool_env("FLOWER_ENABLED"):
     app.add_middleware(FlowerProxyMiddleware)
+
+if _mcp_app is not None:
+    # MCP 子应用自带认证（复用 FastTask 既有的 HTTP Basic 凭据）
+    app.mount(MCP_PATH, _mcp_app)
 
 if get_bool_env("API_DOCS"):
 

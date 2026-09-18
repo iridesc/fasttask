@@ -88,6 +88,7 @@ fasttask/
 │   ├── tools.py         # 任务加载、环境变量读取辅助
 │   ├── api_utils.py     # 认证、Worker 状态、文件管理、Flower 代理中间件、日志中间件
 │   ├── result_storage.py # 结果校验/规范化、大结果外置对象存储、预签名下载
+│   ├── mcp_server.py    # MCP 适配层：把现有接口翻译成 MCP 工具（跟随 API_* 开关）
 │   └── redis_lock.py    # Redis 并发控制（严格锁，冲突直接失败）
 └── loaded_tasks/        # 运行时生成（由 load_tasks 创建，gitignore）
 ```
@@ -142,6 +143,7 @@ fasttask/
 - `ENABLED_TASKS` / `DISABLED_TASKS`：控制 Worker 执行的任务白名单/黑名单
 - `FLOWER_ENABLED`：是否启用 Flower 监控，默认 `False`
 - `API_RUN` / `API_CREATE` / `API_CHECK` 等：控制各类接口是否启用，默认 `True`
+- `API_MCP`：是否启用 MCP 端点（`/mcp`），默认 `False`。工具按 `API_*` 开关动态注册，描述随可用接口变化
 - `RESPONSE_COMPRESS`：是否启用响应 gzip 压缩，默认 `True`。仅在客户端发送 `Accept-Encoding: gzip` 时生效，未声明的客户端行为完全不变；压缩在线程池中执行，不阻塞事件循环。`/download`、`/flower` 以及 `text/event-stream` 响应会自动跳过
 - `RESPONSE_COMPRESS_LEVEL`：gzip 压缩级别，默认 `5`（范围 0-9）。级别越高压缩率略好但 CPU 明显更贵：以 55MB JSON 为例，1 级 148ms / 15.7%，9 级 1129ms / 11.8%。链路带宽越高越适合低级别
 - `DEBUG`：启用后通过 `LoggingMiddleware` 打印详细请求/响应日志

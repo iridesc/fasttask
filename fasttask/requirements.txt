@@ -10,3 +10,4 @@ portalocker
 flower
 httpx
 minio
+mcp>=1.30,<2
