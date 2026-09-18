@@ -126,11 +126,11 @@ env_type_to_envs = {
         Env("RESULT_EXPIRES", f"{3 * 24 * 60 * 60}"),
         # 结果存储层：JSON（默认，内联在 Celery backend）/ S3 / AUTO（超阈值走对象存储）
         Env("RESULT_TYPE", "JSON"),
-        Env("RESULT_AUTO_TO_S3_SIZE", str(1024 * 1024), force_default=True),
-        Env("RESULT_TO_S3_TRIES", "3", force_default=True),
-        # 对象存储：模块内置，全部为内部约定，用户只需知道 RESULT_TYPE 开关。
-        # 全部 force_default：不允许通过环境变量改写，
-        # 避免“配了但没生效”这类难排查的问题。（验收脚本在环境初始化之后再覆盖）
+        Env("RESULT_AUTO_TO_S3_SIZE", str(1024 * 1024)),
+        Env("RESULT_TO_S3_TRIES", "3"),
+        # 对象存储：模块内置，均为内部实现约定（端口/桶名/地址等），
+        # 改了只会出错，因此全部 force_default。
+        # 行为参数（上传重试次数、AUTO 阈值）不在此列，允许用户按需调整。
         Env("S3_PORT", "9000", force_default=True),
         Env("S3_BUCKET", "fasttask-results", force_default=True),
         Env("S3_ENDPOINT", default_value="", optional=True, force_default=True),

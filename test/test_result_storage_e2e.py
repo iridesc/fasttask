@@ -93,6 +93,8 @@ os.environ.update(
     {
         "NODE_TYPE": "single_node",
         "RESULT_TYPE": "AUTO",
+        "RESULT_AUTO_TO_S3_SIZE": "1000",
+        "RESULT_TO_S3_TRIES": "3",
         "FILE_CLEANUP_ENABLED": "False",
         "FLOWER_ENABLED": "False",
         "API_DOCS": "False",
@@ -145,8 +147,6 @@ try:
             "S3_SECURE": S3_SECURE,
             "S3_ACCESS_KEY": S3_ACCESS_KEY,
             "S3_SECRET_KEY": S3_SECRET_KEY,
-            "RESULT_AUTO_TO_S3_SIZE": "1000",
-            "RESULT_TO_S3_TRIES": "3",
             "S3_PRESIGN_EXPIRES": "3600",
         }
     )
