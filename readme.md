@@ -362,6 +362,18 @@ environment:
 要改用外部对象存储（MinIO / Ceph / 云厂商 S3 兼容服务）时，显式配置 `S3_ENDPOINT`、`S3_ACCESS_KEY`、
 `S3_SECRET_KEY`（以及必要的 `S3_PUBLIC_ENDPOINT`）即可，框架侧无需改动。
 
+### 升级顺序（结果外置是破坏性变更）
+
+开启 `S3` / `AUTO` 会改变 `/check` 响应里 `result` 的形态：大结果不再内联，
+而是变成对象存储引用。**旧版客户端会把引用当成结果使用**（且不会报错，难以排查），
+因此升级必须按顺序：
+
+1. 先把客户端升到 `fasttask_manager >= 0.6.0`
+   （它会自动识别并下载外置结果，对调用方透明，同时兼容仍返回内联结果的服务端）
+2. 再在服务端开启 `RESULT_TYPE=S3` 或 `AUTO`
+
+因此 `RESULT_TYPE` 默认保持 `JSON`：未显式配置时行为与历史版本完全一致。
+
 结果查询接口（`/check/{task_name}`）新增 `result_type` 字段标识 `result` 的类型：
 
 - `json`：`result` 为任务定义的 `Result` 结构（与历史版本一致）
@@ -381,15 +393,16 @@ environment:
 - **API_FILE_UPLOAD**：是否启用 `/upload` 文件上传接口
 - **API_STATUS_INFO**：是否启用 `/status_info` 状态查询接口
 - **API_DOCS**：是否启用 `/docs` Swagger 文档页面
-- **API_MCP**：是否启用 [MCP 端点](#mcp-端点)，默认 `False`
+- **API_MCP**：是否启用 [MCP 端点](#mcp-端点)，默认 `True`
 
 ## MCP 端点
 
 FastTask 可以把现有接口自动翻译成 MCP 工具，供 AI 客户端直接调用。
 
-- **API_MCP**：是否启用 MCP 端点，默认 `False`
+- **API_MCP**：是否启用 MCP 端点，默认 `True`
 
-启用后端点为 `https://<host>:<port>/mcp`，用 HTTP 传输接入：
+启用后端点为 `https://<host>:<port>/mcp`，用 HTTP 传输接入。它不改变任何现有接口的行为，
+也不需要额外依赖（镜像已内置 `mcp`），因此默认开启，可用 `API_MCP=False` 关闭：
 
 ```bash
 claude mcp add --transport http fasttask https://10.0.0.1:9001/mcp \

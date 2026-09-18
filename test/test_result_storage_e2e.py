@@ -298,6 +298,29 @@ try:
         )
         check("tag 透传", run_resp["result"].get("tag") == "sync", run_resp["result"])
 
+        section("7. MCP 端点默认启用（API_MCP 默认 True，且不影响其它接口）")
+        mcp_resp = httpx.post(
+            f"{API_BASE}/mcp",
+            json={
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "protocolVersion": "2025-06-18",
+                    "capabilities": {},
+                    "clientInfo": {"name": "selftest", "version": "1"},
+                },
+            },
+            headers={
+                "Accept": "application/json, text/event-stream",
+                "Content-Type": "application/json",
+            },
+            timeout=10,
+            follow_redirects=True,  # /mcp 会 307 到 /mcp/
+        )
+        print(f"  POST /mcp -> HTTP {mcp_resp.status_code}")
+        check("默认启用 MCP 端点", mcp_resp.status_code == 200, mcp_resp.status_code)
+
     finally:
         print("\n清理进程与临时任务…")
         for proc in (api_proc, celery_proc):

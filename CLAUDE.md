@@ -131,7 +131,7 @@ fasttask/
 - `TIME_LIMIT`：硬超时，默认 `SOFT_TIME_LIMIT + 60`
 - `VISIBILITY_TIMEOUT`：Celery broker 可见性超时，默认 `TIME_LIMIT + 60`
 - `RESULT_EXPIRES`：结果过期时间（秒），默认 259200（3 天）
-- `RESULT_TYPE`：结果存储方式，默认 `JSON`。`S3` 一律上传对象存储、`AUTO` 超过 `RESULT_AUTO_TO_S3_SIZE` 才上传；`S3`/`AUTO` 需要配置 `S3_*`
+- `RESULT_TYPE`：结果存储方式，默认 `JSON`。`S3` 一律上传对象存储、`AUTO` 超过 `RESULT_AUTO_TO_S3_SIZE` 才上传；`S3`/`AUTO` 需要配置 `S3_*`。**开启后会改变 `/check` 响应的 result 形态（破坏性），客户端需先升到 `fasttask_manager >= 0.6.0`**
 - `RESULT_AUTO_TO_S3_SIZE`：`AUTO` 模式阈值（字节），默认 1MB
 - `RESULT_TO_S3_TRIES`：结果上传对象存储的重试次数，默认 3，重试后仍失败则任务失败
 - `S3_ENDPOINT` / `S3_BUCKET` / `S3_PREFIX` / `S3_REGION` / `S3_SECURE` / `S3_VERIFY_SSL`：对象存储连接配置。`S3_ENDPOINT` 不配置时自动指向内嵌对象存储（master/single_node 为 `127.0.0.1:$S3_PORT`，worker 为 `$MASTER_HOST:$S3_PORT`），`S3_BUCKET` 默认 `fasttask-results`
@@ -143,7 +143,7 @@ fasttask/
 - `ENABLED_TASKS` / `DISABLED_TASKS`：控制 Worker 执行的任务白名单/黑名单
 - `FLOWER_ENABLED`：是否启用 Flower 监控，默认 `False`
 - `API_RUN` / `API_CREATE` / `API_CHECK` 等：控制各类接口是否启用，默认 `True`
-- `API_MCP`：是否启用 MCP 端点（`/mcp`），默认 `False`。工具按 `API_*` 开关动态注册，描述随可用接口变化
+- `API_MCP`：是否启用 MCP 端点（`/mcp`），默认 `True`。工具按 `API_*` 开关动态注册，描述随可用接口变化。它只新增端点、不改变现有接口行为
 - `RESPONSE_COMPRESS`：是否启用响应 gzip 压缩，默认 `True`。仅在客户端发送 `Accept-Encoding: gzip` 时生效，未声明的客户端行为完全不变；压缩在线程池中执行，不阻塞事件循环。`/download`、`/flower` 以及 `text/event-stream` 响应会自动跳过
 - `RESPONSE_COMPRESS_LEVEL`：gzip 压缩级别，默认 `5`（范围 0-9）。级别越高压缩率略好但 CPU 明显更贵：以 55MB JSON 为例，1 级 148ms / 15.7%，9 级 1129ms / 11.8%。链路带宽越高越适合低级别
 - `DEBUG`：启用后通过 `LoggingMiddleware` 打印详细请求/响应日志
