@@ -7,6 +7,8 @@ services:
     ports:
       - "9001:443"
       - "9000:6379"
+      # 对象存储端口：预签名下载地址指向这里，客户端需要能访问到
+      - "9100:9000"
 
     volumes:
       - ./files:/fasttask/files
@@ -15,6 +17,12 @@ services:
       - NODE_TYPE=distributed_master
       - TASK_QUEUE_PASSWD=passwd
       - FLOWER_ENABLED=True
+      # 结果存储：超过阈值的结果外置到 master 容器内嵌的对象存储
+      # （worker 上传、master 签发预签名下载地址，凭据由 TASK_QUEUE_PASSWD 派生）
+      - RESULT_TYPE=AUTO
+      # 预签名下载地址的对外地址，必须是“客户端能访问到的”地址（宿主机 IP 或域名）；
+      # 不配置时下载地址会指向容器内的 127.0.0.1，容器外无法访问
+      - S3_PUBLIC_ENDPOINT=127.0.0.1:9100
 
   worker-get_circle_area:
     image: docker.io/irid/fasttask:test
@@ -32,6 +40,7 @@ services:
       - ENABLED_TASKS=get_circle_area
       - WORKER_TAG=get_circle_area
       - FLOWER_ENABLED=True
+      - RESULT_TYPE=AUTO
         
 
   worker-get_hypotenuse:
@@ -51,3 +60,4 @@ services:
       - DISABLED_TASKS=get_circle_area
       - WORKER_TAG=get_hypotenuse
       - FLOWER_ENABLED=True
+      - RESULT_TYPE=AUTO

@@ -31,7 +31,7 @@ import pathlib
 import sys
 import textwrap
 import urllib.request
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 FASTTASK_DIR = pathlib.Path(__file__).resolve().parent.parent / "fasttask"
 sys.path.insert(0, str(FASTTASK_DIR))
@@ -254,6 +254,9 @@ def expect_fail(envs, keyword):
 
 
 os.environ["RESULT_TYPE"] = "JSON"
+_saved_for_json_check = {
+    key: os.environ.get(key) for key in ("S3_ENDPOINT", "S3_BUCKET")
+}
 for _key in ("S3_ENDPOINT", "S3_BUCKET"):
     os.environ.pop(_key, None)
 try:
@@ -261,12 +264,11 @@ try:
     check("JSON 模式无需 S3 配置", True)
 except Exception as error:  # noqa: BLE001
     check("JSON 模式无需 S3 配置", False, error)
+finally:
+    for _key, _value in _saved_for_json_check.items():
+        if _value is not None:
+            os.environ[_key] = _value
 
-expect_fail({"RESULT_TYPE": "AUTO", "S3_ENDPOINT": ""}, "S3_ENDPOINT is required")
-expect_fail(
-    {"RESULT_TYPE": "S3", "S3_ENDPOINT": "x:9000", "S3_BUCKET": ""},
-    "S3_BUCKET is required",
-)
 expect_fail(
     {
         "RESULT_TYPE": "AUTO",
@@ -302,6 +304,62 @@ expect_fail(
     "RESULT_TO_S3_TRIES must be >= 1",
 )
 
+section("9b. 对象存储地址/桶名的默认推导（内嵌场景开箱即用）")
+_origin = {
+    key: os.environ.get(key)
+    for key in ("S3_ENDPOINT", "S3_BUCKET", "NODE_TYPE", "MASTER_HOST", "S3_PORT")
+}
+
+os.environ.pop("S3_ENDPOINT", None)
+os.environ["S3_PORT"] = "9000"
+os.environ["NODE_TYPE"] = "single_node"
+check(
+    "master / single_node 默认指向本机",
+    rs.get_s3_endpoint() == "127.0.0.1:9000",
+    rs.get_s3_endpoint(),
+)
+
+os.environ["NODE_TYPE"] = "distributed_worker"
+os.environ["MASTER_HOST"] = "fasttask-master"
+check(
+    "worker 默认指向 MASTER_HOST",
+    rs.get_s3_endpoint() == "fasttask-master:9000",
+    rs.get_s3_endpoint(),
+)
+
+os.environ["S3_ENDPOINT"] = "custom-endpoint:1234"
+check("显式配置优先", rs.get_s3_endpoint() == "custom-endpoint:1234", rs.get_s3_endpoint())
+
+os.environ["S3_BUCKET"] = ""
+check("桶名默认值", rs.get_bucket() == "fasttask-results", rs.get_bucket())
+
+sample_key = "demo/key.json"
+os.environ["S3_PUBLIC_ENDPOINT"] = "s3.example.com:9000"
+public_url = rs.get_public_s3_client().presigned_get_object(
+    rs.get_bucket(), sample_key, expires=timedelta(seconds=60)
+)
+check(
+    "预签名 URL 使用对外地址签名",
+    public_url.startswith("http://s3.example.com:9000/"),
+    public_url[:90],
+)
+os.environ["S3_PUBLIC_ENDPOINT"] = ""
+os.environ["S3_ENDPOINT"] = S3_ENDPOINT  # 明确回到测试端点
+fallback_url = rs.get_public_s3_client().presigned_get_object(
+    rs.get_bucket(), sample_key, expires=timedelta(seconds=60)
+)
+check(
+    "未配置对外地址时回退到服务端地址",
+    fallback_url.startswith(f"http://{S3_ENDPOINT}/"),
+    fallback_url[:90],
+)
+
+for key, value in _origin.items():
+    if value is None:
+        os.environ.pop(key, None)
+    else:
+        os.environ[key] = value
+
 # --------------------------------------------------------------------------- #
 section("10. bucket 自检与过期对象清理")
 os.environ["RESULT_TYPE"] = "AUTO"
@@ -311,6 +369,9 @@ os.environ["S3_BUCKET"] = S3_BUCKET
 
 client = rs.get_s3_client()
 rs.ensure_bucket()
+# 清掉上次运行可能残留的对象，保证断言可重复
+for _obj in client.list_objects(S3_BUCKET, prefix="cleanup-selftest", recursive=True):
+    client.remove_object(S3_BUCKET, _obj.object_name)
 check("ensure_bucket 幂等（bucket 存在）", client.bucket_exists(S3_BUCKET))
 rs.ensure_bucket()
 check("重复调用不报错", True)

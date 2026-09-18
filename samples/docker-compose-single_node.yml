@@ -7,6 +7,8 @@ services:
     ports:
       # 映射api端口 
       - "9001:443"
+      # 对象存储端口：预签名下载地址指向这里，客户端需要能访问到
+      - "9000:9000"
 
     volumes:
       - ./files:/fasttask/files
@@ -15,3 +17,9 @@ services:
       # single_node: 单一节点提供接口+执行任务
       - NODE_TYPE=single_node
       - FLOWER_ENABLED=True
+      # 结果存储：AUTO = 序列化后超过 1MB 的结果自动外置到内嵌对象存储，
+      # 小结果仍内联在 Redis 中（改回 JSON 可恢复历史行为）
+      - RESULT_TYPE=AUTO
+      # 预签名下载地址的对外地址，必须是“客户端能访问到的”宿主机地址/域名；
+      # 不配置时下载地址会指向容器内的 127.0.0.1，容器外无法访问
+      - S3_PUBLIC_ENDPOINT=127.0.0.1:9000

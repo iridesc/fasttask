@@ -36,6 +36,8 @@ from utils.result_storage import (
     RESULT_TYPE_TEXT,
     build_s3_result_response,
     detect_stored_result_type,
+    ensure_bucket,
+    is_s3_enabled,
 )
 from setting import project_title, project_description, project_summary, project_version
 
@@ -93,6 +95,9 @@ class BaseConcurrencyParams(BaseModel):
 async def lifespan(app: FastAPI):
     print("Application startup: Initializing RUNNING_ID...")
     app.state.RUNNING_ID = await initialize_running_id()
+    if is_s3_enabled():
+        # 对象存储自检：配置错误在这里就暴露，而不是等任务跑完上传时才失败
+        await asyncio.to_thread(ensure_bucket)
     yield
 
 

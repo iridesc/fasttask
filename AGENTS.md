@@ -52,8 +52,8 @@ python test/full_test.py
 
 | 模式 | 启动的进程 | 用途 |
 |------|-----------|------|
-| `single_node` | redis + uvicorn + celery worker + flower(可选) | 单机部署，自包含 |
-| `distributed_master` | redis + uvicorn + flower(可选) | 分布式 Master，提供 API + 任务队列，不执行任务 |
+| `single_node` | redis + uvicorn + celery worker + flower(可选) + s3(可选) | 单机部署，自包含 |
+| `distributed_master` | redis + uvicorn + flower(可选) + s3(可选) | 分布式 Master，提供 API + 任务队列，不执行任务 |
 | `distributed_worker` | celery worker | 分布式 Worker，只执行任务，连接 Master 的 Redis |
 
 Supervisor 配置文件：`supervisord_{NODE_TYPE}.conf`。
@@ -78,6 +78,7 @@ fasttask/
 ├── setting.py           # 项目元数据（标题、描述、版本）
 ├── cleanup_files.py     # 文件过期清理进程（Supervisor 管理，定期扫描 files/ 目录）
 ├── start_flower.sh      # Flower 启动脚本（由 Supervisor 调用）
+├── start_s3.sh          # 内嵌对象存储启动脚本（派生凭据 + versitygw，仅 master/single_node）
 ├── requirements.txt     # Python 依赖
 ├── supervisord_*.conf   # 三种部署模式的 Supervisor 配置
 ├── tasks/               # 用户编写的任务文件（业务逻辑）
@@ -132,7 +133,8 @@ fasttask/
 - `RESULT_TYPE`：结果存储方式，默认 `JSON`。`S3` 一律上传对象存储、`AUTO` 超过 `RESULT_AUTO_TO_S3_SIZE` 才上传；`S3`/`AUTO` 需要配置 `S3_*`
 - `RESULT_AUTO_TO_S3_SIZE`：`AUTO` 模式阈值（字节），默认 1MB
 - `RESULT_TO_S3_TRIES`：结果上传对象存储的重试次数，默认 3，重试后仍失败则任务失败
-- `S3_ENDPOINT` / `S3_BUCKET` / `S3_PREFIX` / `S3_REGION` / `S3_SECURE` / `S3_VERIFY_SSL`：对象存储连接配置
+- `S3_ENDPOINT` / `S3_BUCKET` / `S3_PREFIX` / `S3_REGION` / `S3_SECURE` / `S3_VERIFY_SSL`：对象存储连接配置。`S3_ENDPOINT` 不配置时自动指向内嵌对象存储（master/single_node 为 `127.0.0.1:$S3_PORT`，worker 为 `$MASTER_HOST:$S3_PORT`），`S3_BUCKET` 默认 `fasttask-results`
+- `S3_PUBLIC_ENDPOINT`：预签名下载地址对外暴露的地址，容器部署时必须配置（否则指向容器内的 127.0.0.1）
 - `S3_PRESIGN_EXPIRES`：预签名下载地址有效期（秒），默认等于 `SOFT_TIME_LIMIT`
 - `S3_ACCESS_KEY` / `S3_SECRET_KEY`：对象存储凭据，不配置则由 `TASK_QUEUE_PASSWD` 派生（master 与 worker 自动一致）
 - `WORKER_CONCURRENCY`：Worker 并发数，默认 CPU 核数

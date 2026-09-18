@@ -42,8 +42,13 @@ _RESULT_TYPE_AUTO_UPPER = "AUTO"
 _CONTENT_TYPE_JSON = "application/json"
 _DEFAULT_AUTO_OFFLOAD_SIZE = 1024 * 1024
 _DEFAULT_PRESIGN_EXPIRES = 24 * 60 * 60
+_DEFAULT_S3_PORT = "9000"
+_DEFAULT_S3_BUCKET = "fasttask-results"
 
 _s3_client = None
+_s3_client_endpoint = None
+_public_s3_client = None
+_public_s3_client_endpoint = None
 
 
 # --------------------------------------------------------------------------- #
@@ -68,7 +73,71 @@ def get_presign_expires():
 
 
 def get_bucket():
-    return os.environ.get("S3_BUCKET", "")
+    return os.environ.get("S3_BUCKET") or _DEFAULT_S3_BUCKET
+
+
+def get_s3_port():
+    return os.environ.get("S3_PORT", _DEFAULT_S3_PORT)
+
+
+def get_s3_endpoint():
+    """对象存储地址（服务端连接用）。
+
+    未显式配置 `S3_ENDPOINT` 时按内嵌对象存储推导：
+    master / single_node 走本机，worker 走 MASTER_HOST。
+    """
+    endpoint = (os.environ.get("S3_ENDPOINT") or "").strip()
+    if endpoint:
+        return endpoint
+
+    if os.environ.get("NODE_TYPE") in ("single_node", "distributed_master"):
+        return f"127.0.0.1:{get_s3_port()}"
+    return f"{os.environ.get('MASTER_HOST', '127.0.0.1')}:{get_s3_port()}"
+
+
+def get_s3_public_endpoint():
+    """预签名下载地址对外暴露的地址（客户端访问用）。
+
+    容器部署时服务端连的是容器内的 `127.0.0.1:9000`，而下载方在容器外，
+    因此预签名 URL 需要以对外可达的地址（域名或宿主 IP:端口）来生成。
+    未配置时沿用 `S3_ENDPOINT`（适用于客户端与服务端同网络的场景）。
+    """
+    return (os.environ.get("S3_PUBLIC_ENDPOINT") or "").strip()
+
+
+def get_public_s3_client():
+    """生成预签名 URL 专用客户端（endpoint 为对外地址）。
+
+    SigV4 签名包含 Host 头，所以不能“事后把 URL 的主机名换掉”——
+    必须直接以对外地址计算签名，否则对象存储侧校验会失败（403 SignatureDoesNotMatch）。
+    `presigned_get_object` 只做签名计算、不发起请求，因此对外地址即使当前不可达也没关系。
+    """
+    global _public_s3_client, _public_s3_client_endpoint
+
+    public_endpoint = get_s3_public_endpoint()
+    if not public_endpoint:
+        return get_s3_client()
+
+    if _public_s3_client is None or _public_s3_client_endpoint != public_endpoint:
+        from minio import Minio
+
+        access_key, secret_key = derive_s3_credentials()
+        public_secure = os.environ.get("S3_PUBLIC_SECURE", "").strip()
+        secure = (
+            public_secure == "True"
+            if public_secure
+            else os.environ.get("S3_SECURE", "False") == "True"
+        )
+        _public_s3_client = Minio(
+            public_endpoint,
+            access_key=access_key,
+            secret_key=secret_key,
+            secure=secure,
+            region=os.environ.get("S3_REGION") or None,
+            cert_check=os.environ.get("S3_VERIFY_SSL", "True") == "True",
+        )
+        _public_s3_client_endpoint = public_endpoint
+    return _public_s3_client
 
 
 def get_object_prefix():
@@ -95,13 +164,11 @@ def derive_s3_credentials():
 
 def get_s3_client():
     """延迟构建 S3 客户端：RESULT_TYPE=JSON 时不引入 minio 依赖。"""
-    global _s3_client
-    if _s3_client is None:
-        from minio import Minio
+    global _s3_client, _s3_client_endpoint
 
-        endpoint = os.environ.get("S3_ENDPOINT", "")
-        if not endpoint:
-            raise RuntimeError("S3_ENDPOINT is required when RESULT_TYPE is S3/AUTO")
+    endpoint = get_s3_endpoint()
+    if _s3_client is None or _s3_client_endpoint != endpoint:
+        from minio import Minio
 
         access_key, secret_key = derive_s3_credentials()
         _s3_client = Minio(
@@ -112,6 +179,7 @@ def get_s3_client():
             region=os.environ.get("S3_REGION") or None,
             cert_check=os.environ.get("S3_VERIFY_SSL", "True") == "True",
         )
+        _s3_client_endpoint = endpoint
     return _s3_client
 
 
@@ -228,7 +296,8 @@ def build_s3_result_response(payload, presign=True):
 
     expires = get_presign_expires()
     try:
-        client = get_s3_client()
+        # 用对外地址签名（而非事后替换主机名），保证签名与下载方发出的 Host 一致
+        client = get_public_s3_client()
         response["url"] = client.presigned_get_object(
             get_bucket(), payload["key"], expires=timedelta(seconds=expires)
         )
@@ -248,11 +317,15 @@ def ensure_bucket():
     """启动自检：确保 bucket 存在。配置错误时立刻失败，而不是等任务跑完才炸。"""
     client = get_s3_client()
     bucket = get_bucket()
-    if not bucket:
-        raise RuntimeError("S3_BUCKET is required when RESULT_TYPE is S3/AUTO")
-    if not client.bucket_exists(bucket):
+    if client.bucket_exists(bucket):
+        return
+    try:
         client.make_bucket(bucket)
         print(f"FastTask ---> created bucket: {bucket}")
+    except Exception:
+        # 多个 uvicorn worker 并发自检时，可能已被其它 worker 创建成功
+        if not client.bucket_exists(bucket):
+            raise
 
 
 def cleanup_expired_objects(expiration_seconds):

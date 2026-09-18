@@ -127,9 +127,14 @@ env_type_to_envs = {
         Env("RESULT_TYPE", "JSON"),
         Env("RESULT_AUTO_TO_S3_SIZE", str(1024 * 1024)),
         Env("RESULT_TO_S3_TRIES", "3"),
-        # 对象存储连接：RESULT_TYPE 为 S3/AUTO 时必填，其余情况可留空
+        # 对象存储连接：默认指向内嵌的 versitygw（master/single_node 本机，worker 走 MASTER_HOST）
+        Env("S3_PORT", "9000"),
         Env("S3_ENDPOINT", default_value="", optional=True),
-        Env("S3_BUCKET", default_value="", optional=True),
+        # 预签名下载地址对外暴露的地址（容器部署时必配，否则下载方访问不到容器内的 127.0.0.1）
+        Env("S3_PUBLIC_ENDPOINT", default_value="", optional=True),
+        # 对外地址是否使用 https（未配置时继承 S3_SECURE）
+        Env("S3_PUBLIC_SECURE", default_value="", optional=True),
+        Env("S3_BUCKET", "fasttask-results"),
         Env("S3_PREFIX", default_value="", optional=True),
         Env("S3_REGION", "us-east-1"),
         Env("S3_SECURE", "False"),
@@ -159,6 +164,15 @@ env_type_to_envs = {
         Env(
             "FASTTASK_FILES_DIR",
             "/fasttask/files/fasttask",
+            force_default=True,
+            init_func=init_dir,
+            is_print_env=False,
+        ),
+        Env(
+            "S3_DATA_DIR",
+            default_value=lambda: os.path.join(
+                os.environ["FASTTASK_FILES_DIR"], "s3"
+            ),
             force_default=True,
             init_func=init_dir,
             is_print_env=False,
@@ -293,12 +307,17 @@ def assemble_supervisor_conf():
         shutil.copy(os.path.join(template_dir, "uvicorn.conf"), conf_dir)
         if os.environ.get("FLOWER_ENABLED", "False") == "True":
             shutil.copy(os.path.join(template_dir, "flower.conf"), conf_dir)
+        # 内嵌对象存储：仅提供 API 的节点需要（worker 只用客户端连过来）
+        if os.environ.get("RESULT_TYPE", "JSON").strip().upper() in ("S3", "AUTO"):
+            shutil.copy(os.path.join(template_dir, "s3.conf"), conf_dir)
 
     if node_type in ("single_node", "distributed_worker"):
         shutil.copy(os.path.join(template_dir, "celery.conf"), conf_dir)
 
-    # file_cleanup: 当 FILE_CLEANUP_ENABLED=True 时启用
-    if os.environ.get("FILE_CLEANUP_ENABLED", "False") == "True":
+    # file_cleanup：开启文件清理，或结果外置到对象存储（需要清理过期对象）时启用
+    if os.environ.get("FILE_CLEANUP_ENABLED", "False") == "True" or (
+        os.environ.get("RESULT_TYPE", "JSON").strip().upper() in ("S3", "AUTO")
+    ):
         shutil.copy(os.path.join(template_dir, "file_cleanup.conf"), conf_dir)
 
 
@@ -336,16 +355,14 @@ def check_envs():
 
 
 def check_result_storage_envs():
-    """结果存储层的前置校验（RESULT_TYPE=S3/AUTO 时生效）。"""
+    """结果存储层的前置校验（RESULT_TYPE=S3/AUTO 时生效）。
+
+    S3_ENDPOINT / S3_BUCKET 都具备默认值（指向内嵌对象存储），无需强制配置。
+    """
     result_type = os.environ.get("RESULT_TYPE", "JSON").strip().upper()
 
     if result_type not in ("S3", "AUTO"):
         return
-
-    if not os.environ.get("S3_ENDPOINT"):
-        raise Exception("S3_ENDPOINT is required when RESULT_TYPE is S3/AUTO")
-    if not os.environ.get("S3_BUCKET"):
-        raise Exception("S3_BUCKET is required when RESULT_TYPE is S3/AUTO")
 
     # 上传重试次数必须为正，否则 @retry 语义不成立
     tries = int(os.environ.get("RESULT_TO_S3_TRIES", 3))

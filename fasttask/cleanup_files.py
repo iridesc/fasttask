@@ -72,9 +72,37 @@ def cleanup_expired_files():
                 pass  # 目录非空，跳过
 
 
+def cleanup_expired_s3_results():
+    """清理对象存储里的过期结果对象。
+
+    只在 master / single_node 执行：worker 既不提供 API 也不应删除共享对象，
+    多节点并删还会造成无意义的竞争。
+    """
+    if os.environ.get("NODE_TYPE") not in ("single_node", "distributed_master"):
+        return
+
+    from utils.result_storage import cleanup_expired_objects, is_s3_enabled
+
+    if not is_s3_enabled():
+        return
+
+    expiration_seconds = int(os.environ.get("FILE_EXPIRATION_SECONDS", 0))
+    if expiration_seconds <= 0:
+        return
+
+    try:
+        removed = cleanup_expired_objects(expiration_seconds)
+        if removed:
+            print(f"清理过期结果对象: {removed} 个")
+    except Exception as error:  # noqa: BLE001 - 清理失败不应弄死清理进程
+        print(f"清理过期结果对象失败: {error!r}")
+
+
 if __name__ == "__main__":
     print("文件清理进程已启动")
     cleanup_expired_files()
+    cleanup_expired_s3_results()
     while True:
         time.sleep(600)
         cleanup_expired_files()
+        cleanup_expired_s3_results()

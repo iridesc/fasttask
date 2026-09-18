@@ -12,6 +12,8 @@ services:
       - "9001:443"
       # 在distributed_master需要映射任务队列端口
       - "9000:6379"
+      # 对象存储端口：预签名下载地址指向这里，客户端需要能访问到
+      - "9100:9000"
       # webtop  related
       - 3000:3001
 
@@ -21,6 +23,10 @@ services:
     environment:
       - NODE_TYPE=distributed_master
       - TASK_QUEUE_PASSWD=passwd
+      # 结果存储：超过阈值的结果外置到内嵌对象存储
+      - RESULT_TYPE=AUTO
+      # 预签名下载地址的对外地址（必须是客户端可达的地址）
+      - S3_PUBLIC_ENDPOINT=127.0.0.1:9100
 
       # webtop  related
       - PUID=1000
@@ -50,6 +56,7 @@ services:
       - MASTER_HOST=fasttask-desktop-master
       - TASK_QUEUE_PORT=9000
       - TASK_QUEUE_PASSWD=passwd
+      - RESULT_TYPE=AUTO
 
       # webtop  related
       - PUID=1000
@@ -78,6 +85,7 @@ services:
       - MASTER_HOST=fasttask-desktop-master
       - TASK_QUEUE_PORT=9000
       - TASK_QUEUE_PASSWD=passwd
+      - RESULT_TYPE=AUTO
 
       # webtop  related
       - PUID=1000
