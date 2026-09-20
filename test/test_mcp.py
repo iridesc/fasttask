@@ -304,9 +304,17 @@ try:
                     "",
                 )
                 check(
-                    "② 说明 run 的 result_id 为空，且默认一律走 create/check",
-                    "result_id 为空" in instructions
-                    and "默认一律走 create_<task> + check_<task>" in instructions,
+                    "② 核心调用规则在最前面（进客户端可见窗口）",
+                    "默认走 create_<task> + check_<task>" in instructions
+                    and "不产生可查询的 id" in instructions,
+                    "",
+                )
+                # 客户端普遍只展示 instructions 的前几百字符（pi 是 300），
+                # 所以「怎么调用」的规则必须落在前面，否则 AI 看不到。
+                head = instructions[:300]
+                check(
+                    "② 调用规则确实落在前 300 字符内",
+                    "默认走 create_<task> + check_<task>" in head,
                     "",
                 )
                 check(

@@ -50,45 +50,35 @@ MCP_SERVER_NAME = "fasttask"
 # MCP 的说明分两层：instructions（全局一份，讲“这个模块是什么、平台怎么用”）
 # 与 tools[].description（每个工具一份，讲“这个任务干什么”）。
 # 下面这段是平台约定，对所有 FastTask 封装的模块都一样。
-_FRAMEWORK_GUIDE = """本模块使用 FastTask 异步任务平台封装，平台更多信息见
-https://github.com/iridesc/fasttask （公开仓库，内网环境可能不可达）。
+# MCP 的说明分两层：instructions（全局一份）与 tools[].description（每个工具一份）。
+#
+# instructions 的排列顺序按「AI 需要什么才能正确行动」决定，而不是按信息类型：
+# 客户端普遍只展示它的前几百字符（pi-mcp-adapter 的阈值是 300），所以决定调用行为的
+# 规则必须放在最前面；背景介绍放后面 —— 读不到也不影响正确调用。
 
-本项目基于 FastTask，由它负责任务的创建、调度与执行。每个任务会提供以下工具
-（取决于模块配置）：
-- create_<task>：创建异步任务，立即返回 result_id，任务进入队列
-- check_<task>：查询任务状态与结果，用 result_id 查询
-- run_<task>：同步执行，结果随本次响应返回（result_id 为空，不可用于 check）
+# 核心调用约定。放最前面，保证进入可见窗口：AI 能不能正确调用，取决于这几行。
+_CALLING_CONVENTIONS = """调用方式：默认走 create_<task> + check_<task>，后台执行、不占用本次调用。
+run_<task> 只在需要立刻拿到结果时用（不产生可查询的 id，结果一次性消费）。
+通用接口：fasttask_status 查看 worker 与队列、fasttask_revoke 用 result_id 撤销任务。"""
 
-默认一律走 create_<task> + check_<task>：它后台执行、不占用本次调用，结果同样可以下载。
-run_<task> 只在你需要在本轮对话里立即拿到结果时使用，不要因为"只查一个目标"就用它。
+# 使用细节。排在核心规则之后：属于「用起来才会碰到」的信息，即便被客户端截断，
+# 工具描述里也各有兜底，不会导致调用错误。
+_USAGE_DETAILS = """典型流程：create_<task> 拿到 result_id → check_<task> 轮询 → 取回结果。
 
-通用接口：
-- fasttask_status：查看在线 worker、各任务队列积压与近期成功/失败统计
-- fasttask_revoke：用已有的 result_id 撤销排队中或执行中的任务
-
-典型流程：create_<task> 拿到 result_id → check_<task> 轮询 → 取回结果。
-
-结果形态：返回的 result_type 决定 result 的含义
+结果形态（result_type 决定 result 的含义）：
 - json：result 即任务结果，可直接使用
 - s3  ：结果已外置到对象存储，result 是引用（含预签名 url）
 - text：result 是错误信息（失败时含完整 traceback）或状态文本
 
-下载外置结果：result.url 就是带签名的下载地址，两种形态都有可能，
-看开头是不是 http 即可判断：
-
-    完整地址（直接下载）
-    curl -s -o result.json "https://host:9014/fasttask-results/...?X-Amz-..."
-
-    相对路径（拼上你配置本服务时用的地址，去掉末尾的 /mcp）
-    curl -s -o result.json "https://<服务地址>/fasttask-results/...?X-Amz-..."
-
-下载后用 jq 等工具按需提取字段，不要把整个结果读入上下文。
-预签名地址有时效，过期后重新调用查询接口即可拿到新地址。
-"""
+下载外置结果：result.url 就是带签名的下载地址，看开头是不是 http 即可判断形态：
+    完整地址   curl -s -o result.json "<url>"
+    相对路径   curl -s -o result.json "https://<服务地址><url>"   # 拼上配置本服务时的地址
+下载后用 jq 等工具按需提取字段，不要把整个结果读入上下文；预签名地址有时效，
+过期后重新调用查询接口即可拿到新地址。"""
 
 
 # --------------------------------------------------------------------------- #
-# instructions 的组装：① 模块身份 → ② 平台约定 → ③ 任务一览
+# instructions 的组装（顺序即优先级，见上方说明）
 # --------------------------------------------------------------------------- #
 def _first_paragraph(text):
     """取 docstring 的首段（遇到空行即停）作为一句话摘要。
@@ -97,12 +87,12 @@ def _first_paragraph(text):
     """
     if not text:
         return ""
-    lines = []
+    got = []
     for line in text.splitlines():
         if not line.strip():
             break
-        lines.append(line.strip())
-    return " ".join(lines)
+        got.append(line.strip())
+    return " ".join(got)
 
 
 # project_summary 紧跟模块名出现在 instructions 最前面，而客户端普遍只展示
@@ -113,11 +103,7 @@ _SUMMARY_MAX_LENGTH = 100
 
 def warn_if_summary_too_long():
     """setting.project_summary 过长时告警，提醒它挤占了 instructions 的可见窗口。"""
-    try:
-        from setting import project_summary
-    except Exception:  # noqa: BLE001 - 缺 setting 时 build_module_identity 另有处理
-        return
-    summary = str(project_summary or "").strip()
+    summary = module_field("project_summary")
     if len(summary) > _SUMMARY_MAX_LENGTH:
         # flush=True 必需：这个进程的 stdout 常被重定向到文件/管道（supervisord、nohup），
         # 此时是块缓冲，不 flush 的话告警会卡在缓冲区里，等进程退出才落盘 ——
@@ -131,57 +117,50 @@ def warn_if_summary_too_long():
         )
 
 
-def build_module_identity():
-    """① 模块身份：来自模块自己的 setting.py。
+def module_field(name, prefix=""):
+    """取模块自己 setting.py 里的一个字段；缺失或导入失败时返回空串。
 
     以前 setting.py 只喂给 FastAPI/Swagger，对 MCP 客户端不可见，导致 AI 打开
     这个服务时不知道“整体是干什么的”，只能从单个任务的 docstring 拼凑。
+    这里拆成字段分别摆放，好让 summary 紧跟标题、description 靠后。
     """
     try:
-        from setting import (
-            project_description,
-            project_summary,
-            project_title,
-            project_version,
-        )
+        import setting
     except Exception:  # noqa: BLE001 - 模块信息缺失不应影响工具可用性
         return ""
-    parts = [
-        str(project_title or "").strip(),
-        str(project_summary or "").strip(),
-        str(project_description or "").strip(),
-    ]
-    version = str(project_version or "").strip()
-    if version:
-        # 加前缀，避免版本号在一片描述文字里单独成行、看不出是什么
-        parts.append(f"版本：{version}")
-    return "\n".join(p for p in parts if p)
+    value = str(getattr(setting, name, "") or "").strip()
+    return f"{prefix}{value}" if value else ""
 
 
 def build_task_catalog(task_names):
-    """③ 任务一览：每个任务一行摘要，取模块 docstring 的首段。"""
+    """任务一览：每个任务一行摘要，取模块 docstring 的首段。"""
     if not task_names:
         return ""
-    lines = ["本模块提供以下任务："]
+    out = ["本模块提供以下任务："]
     for name in task_names:
         summary = _first_paragraph(task_doc(name))
-        lines.append(f"- {name}：{summary}" if summary else f"- {name}")
-    return "\n".join(lines)
+        out.append(f"- {name}：{summary}" if summary else f"- {name}")
+    return "\n".join(out)
 
 
 def build_instructions(task_names):
-    """拼装 MCP instructions：① 模块身份 + ② 平台约定 + ③ 任务一览。"""
+    """拼装 MCP instructions。
+
+    顺序按「AI 需要什么才能正确行动」排：模块名与一句话定位 → 调用规则 → 使用细节
+    → 模块详细说明与版本 → 任务一览。客户端只展示前几百字符，所以规则必须靠前。
+    """
     blocks = [
-        build_module_identity(),
-        _FRAMEWORK_GUIDE,
+        module_field("project_title"),
+        module_field("project_summary"),
+        _CALLING_CONVENTIONS,
+        _USAGE_DETAILS,
+        module_field("project_description"),
+        module_field("project_version", prefix="版本："),
         build_task_catalog(task_names),
     ]
     return "\n\n".join(block for block in blocks if block)
 
 
-# --------------------------------------------------------------------------- #
-# 小工具
-# --------------------------------------------------------------------------- #
 def _json(data) -> str:
     return json.dumps(data, ensure_ascii=False, indent=2)
 
