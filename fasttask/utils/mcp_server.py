@@ -22,6 +22,8 @@ import json
 import secrets
 from typing import Annotated
 
+from starlette.routing import get_route_path
+
 from celery_app import app as celery_app
 
 from utils.api_utils import (
@@ -477,6 +479,35 @@ def build_mcp_server(task_names, running_id_getter):
         _register_revoke_tool(mcp, running_id_getter)
 
     return mcp
+
+
+# --------------------------------------------------------------------------- #
+# 路径归一化（消除挂载点尾斜杠导致的 307 重定向）
+# --------------------------------------------------------------------------- #
+class MCPPathNormalizeMiddleware:
+    """把 ``/mcp`` 改写成 ``/mcp/``，避免 Starlette ``Mount`` 的 307 重定向。
+
+    ``app.mount("/mcp", ...)`` 会对「路径正好等于挂载点、但没带尾斜杠」的请求
+    返回 ``307 Location: /mcp/``：功能上可用（307 保留方法与 body），但每次调用
+    多一跳 RTT，且不跟随重定向的客户端会直接失败。这里在路由匹配之前补上尾斜杠，
+    请求直接命中已挂载的子应用。
+
+    必须是纯 ASGI 中间件：不读 body、不包装 ``send``，否则会把 MCP 的
+    ``text/event-stream`` 流式响应拆成分块，影响长连接。
+    """
+
+    def __init__(self, app, path):
+        self.app = app
+        self.path = path
+        self.path_with_slash = path + "/"
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] == "http" and get_route_path(scope) == self.path:
+            # root_path 前缀原样保留，只补挂载点的尾斜杠
+            scope = dict(scope)
+            scope["path"] = scope["path"][: -len(self.path)] + self.path_with_slash
+            scope["raw_path"] = scope["path"].encode()
+        await self.app(scope, receive, send)
 
 
 # --------------------------------------------------------------------------- #

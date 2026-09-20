@@ -228,7 +228,7 @@ try:
         headers={"Accept": "application/json, text/event-stream",
                  "Content-Type": "application/json"},
         timeout=10,
-        follow_redirects=True,  # /mcp 会 307 到 /mcp/，需跟随才能触达认证层
+        follow_redirects=False,  # /mcp 不再 307，可直接断言状态码
     )
     check("未带凭据返回 401", unauthorized.status_code == 401, unauthorized.status_code)
     bad_auth = httpx.post(
@@ -240,7 +240,7 @@ try:
             "Authorization": "Basic " + base64.b64encode(b"admin:wrong").decode(),
         },
         timeout=10,
-        follow_redirects=True,
+        follow_redirects=False,  # 同上：不再需要跟随重定向
     )
     check("凭据错误返回 401", bad_auth.status_code == 401, bad_auth.status_code)
 

@@ -107,7 +107,12 @@ _mcp_server = None
 _mcp_app = None
 if get_bool_env("API_MCP"):
     try:
-        from utils.mcp_server import MCP_PATH, build_mcp_server, wrap_mcp_app
+        from utils.mcp_server import (
+            MCP_PATH,
+            MCPPathNormalizeMiddleware,
+            build_mcp_server,
+            wrap_mcp_app,
+        )
     except ImportError as error:
         raise RuntimeError(
             "API_MCP=True 需要 mcp 依赖，请安装：pip install 'mcp>=1.30,<2'"
@@ -177,6 +182,9 @@ if get_bool_env("FLOWER_ENABLED"):
 app.add_middleware(RequestContextMiddleware)
 
 if _mcp_app is not None:
+    # 消除 /mcp -> /mcp/ 的 307：Starlette 的 Mount 会对不带尾斜杠的挂载点做重定向，
+    # 补上尾斜杠后请求直接命中子应用。中间件统一在路由之前执行，与 mount 的先后无关。
+    app.add_middleware(MCPPathNormalizeMiddleware, path=MCP_PATH)
     # MCP 子应用自带认证（复用 FastTask 既有的 HTTP Basic 凭据）
     app.mount(MCP_PATH, _mcp_app)
 

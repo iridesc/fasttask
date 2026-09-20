@@ -345,10 +345,15 @@ try:
                 "Content-Type": "application/json",
             },
             timeout=10,
-            follow_redirects=True,  # /mcp 会 307 到 /mcp/
+            follow_redirects=False,  # /mcp 不再 307 重定向
         )
         print(f"  POST /mcp -> HTTP {mcp_resp.status_code}")
         check("默认启用 MCP 端点", mcp_resp.status_code == 200, mcp_resp.status_code)
+        check(
+            "POST /mcp 不再 307 重定向",
+            "location" not in mcp_resp.headers,
+            mcp_resp.headers.get("location"),
+        )
 
     finally:
         print("\n清理进程与临时任务…")
