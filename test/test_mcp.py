@@ -304,8 +304,9 @@ try:
                     "",
                 )
                 check(
-                    "② 说明 run 的 result_id 为空、优先走 create/check",
-                    "result_id 为空" in instructions and "优先走 create + check" in instructions,
+                    "② 说明 run 的 result_id 为空，且默认一律走 create/check",
+                    "result_id 为空" in instructions
+                    and "默认一律走 create_<task> + check_<task>" in instructions,
                     "",
                 )
                 check(

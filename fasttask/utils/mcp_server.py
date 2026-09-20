@@ -57,9 +57,10 @@ https://github.com/iridesc/fasttask （公开仓库，内网环境可能不可�
 （取决于模块配置）：
 - create_<task>：创建异步任务，立即返回 result_id，任务进入队列
 - check_<task>：查询任务状态与结果，用 result_id 查询
-- run_<task>：同步执行，结果随本次响应返回（result_id 为空，不可用于 check），
-  仅适合秒级完成的任务
-除非工具说明里明确写了适合同步执行，否则一律优先走 create + check。
+- run_<task>：同步执行，结果随本次响应返回（result_id 为空，不可用于 check）
+
+默认一律走 create_<task> + check_<task>：它后台执行、不占用本次调用，结果同样可以下载。
+run_<task> 只在你需要在本轮对话里立即拿到结果时使用，不要因为"只查一个目标"就用它。
 
 通用接口：
 - fasttask_status：查看在线 worker、各任务队列积压与近期成功/失败统计
@@ -280,15 +281,15 @@ def _register_create_tool(mcp, task_name, params_model, result_model, running_id
         _as_structured(create_tool, task_name, result_model)
 
     doc = task_doc(task_name)
-    lines = [f"创建 {task_name} 异步任务，立即返回 result_id，任务在后台排队执行。"]
+    lines = [
+        f"创建 {task_name} 异步任务，立即返回 result_id，任务在后台排队执行。",
+        "这是执行本任务的**默认方式**；仅在你需要在本轮对话里立即拿到结果时才考虑 "
+        f"run_{task_name}（它不产生可查询的 id）。",
+    ]
     if doc:
         lines.append(f"任务说明：{doc}")
     if get_bool_env("API_CHECK"):
         lines.append(f"用 check_{task_name}(result_id=...) 查询状态与结果。")
-    if get_bool_env("API_RUN"):
-        lines.append(
-            f"若任务可在数秒内完成，也可以用 run_{task_name}(...) 同步拿到结果。"
-        )
     mcp.tool(name=create_tool.__name__, description="\n".join(lines))(create_tool)
 
 
@@ -339,19 +340,29 @@ def _register_run_tool(mcp, task_name, params_model, result_model, running_id_ge
     doc = task_doc(task_name)
     lines = [
         f"同步执行 {task_name} 任务并直接返回结果（不进入任务队列）。",
-        # 把适用条件写死在这里：instructions 里那句中优先 create 的规则留了
-        # “除非工具说明明确写了”这个后门，不写清楚 AI 会自行认定单个参数也算特例。
-        "只在本次调用很快返回时才用本工具，例如单个或极少量目标、结果体量小；"
-        "批量目标、或参数可能很大时请改用 "
-        f"create_{task_name} + check_{task_name}（后台执行，不会阻塞本次调用，"
-        "大结果会自动外置）。",
-        "执行期间会一直占用本次调用，超出客户端等待时间会失败。",
-        "结果要么全量返回，要么（服务端开启外置且超过阈值时）返回可下载的 s3 引用。",
-        # 这里刻意强调：run 的结果随本次响应一次性交付，不产生可查询的任务 id。
-        "注意：结果已随本次响应返回，不会产生可查询的任务 id（返回的 "
-        "result_id 为空）；请不要拿它去调 check，需要可查询的任务请用 "
-        f"create_{task_name}。",
     ]
+    if get_bool_env("API_CREATE"):
+        # create 可用时明确要求优先用它。之前的写法只说“批量目标请改用 create”，
+        # 于是 AI 一看“就一个 URL”就自判合规地用了 run —— 描述里给了它一个
+        # 可以自行解释的例外，实际就不再优先 create 了。这里把默认流程写死。
+        lines.append(
+            f"不要默认用本工具：请优先使用 create_{task_name} + "
+            f"check_{task_name}（后台执行，不占用本次调用，结果一样可以下载）。"
+            "只有当你确实需要在本轮对话里立即拿到结果、且目标数量极少时才用它。"
+        )
+        lines.append(
+            "执行期间会一直占用本次调用，超出客户端等待时间会失败；且不会产生"
+            "可查询的任务 id（返回的 result_id 为空），结果只能一次性消费。"
+        )
+    else:
+        # 没开 create 时它是唯一途径，不再劝退
+        lines.append(
+            f"create_{task_name} 在本服务未启用，这是执行 {task_name} 的唯一方式。"
+            "执行期间会一直占用本次调用，超出客户端等待时间会失败。"
+        )
+    lines.append(
+        "结果要么全量返回，要么（服务端开启外置且超过阈值时）返回可下载的 s3 引用。"
+    )
     if doc:
         lines.append(f"任务说明：{doc}")
     mcp.tool(name=run_tool.__name__, description="\n".join(lines))(run_tool)
