@@ -277,11 +277,14 @@ def _iso_utc(dt):
 
 
 def build_s3_result_response(payload):
-    """把存储层 payload 转成返回给客户端的结果引用。
+    """把存储层 payload 转成返回给客户端的引用。
 
     ``url`` 是**相对路径**（形如 ``/<bucket>/<key>?X-Amz-...``）：客户端拼上自己
     访问 FastTask 的地址即可下载，所以服务端不必知道对外地址，也不需要额外暴露
     对象存储端口（代理会在转发时把 Host 统一改回内部地址）。
+
+    因为相对路径不自带主机名，这里额外给一个 ``hint`` 说明怎么拼前缀：调用方
+    （尤其是 AI 客户端）往往只拿得到这个返回值，不应为了找地址去翻配置文件。
 
     预签名失败不阻塞状态查询：``url`` 置空并记录 ``url_error``，
     避免调用方把“引用存在但不可下载”误当成内联结果。
@@ -293,6 +296,13 @@ def build_s3_result_response(payload):
         "url": None,
         "expires_at": None,
         "url_error": None,
+        "hint": (
+            "url 是相对路径：把它拼在**你配置本服务时用的那个地址**后面即可下载"
+            "（去掉末尾的 /mcp 等路径）。例如服务地址是 https://host:9001/mcp，"
+            "下载地址就是 https://host:9001 + url。请下载后用 jq 等工具按需提取"
+            "字段，不要把整个结果读入上下文；预签名地址有时效，过期后重新调用"
+            "查询接口即可获取新地址。"
+        ),
     }
 
     expires = get_presign_expires()

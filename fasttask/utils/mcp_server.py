@@ -71,18 +71,25 @@ https://github.com/iridesc/fasttask （公开仓库，内网环境可能不可�
 
 典型流程：create_<task> 拿到 result_id → check_<task> 轮询 → 取回结果。
 
-结果形态：check 返回的 result_type 决定 result 的含义
+结果形态：返回的 result_type 决定 result 的含义
 - json：result 即任务结果，可直接使用
 - s3  ：结果已外置到对象存储，result 是引用（含预签名 url）
 - text：result 是错误信息（失败时含完整 traceback）或状态文本
 
-重要：任务结果可能很大。当 result_type 为 "s3" 时，result.url 是一个相对路径
-（形如 /fasttask-results/20260918/xxx.json?X-Amz-...），把它拼在本 FastTask 服务
-的地址后面即可下载。请下载到本地后再用 jq 等工具按需提取字段，不要把整个结果
-读入上下文：
+什么时候会外置（由服务端的 RESULT_TYPE 配置决定，不由调用方控制）：
+- JSON：一律不外置，结果始终内联
+- S3  ：一律外置
+- AUTO：超过阈值才外置
+所以看到 result_type=s3 只说明服务端开了外置，与本次结果大小无关。
 
-    curl -s -o result.json "https://<fasttask 地址><result.url>"
+如何下载外置结果：result.url 是**相对路径**，它的前缀就是
+**你在 MCP 客户端里配置的那个服务地址**（去掉末尾的 /mcp 路径）。
+例如你配的是 https://host:9001/mcp，下载地址就是 https://host:9001 + result.url：
+
+    curl -s -o result.json "https://<你配置的服务地址><result.url>"
     jq '.some_field' result.json
+
+不要把整个结果读入上下文；预签名地址有时效，过期后重新调用查询接口即可。
 """
 
 
@@ -264,7 +271,8 @@ def _build_output_model(task_name, result_model):
             Field(
                 description=(
                     "任务结果。result_type=json 时为 anyOf 中第一个结构；"
-                    "s3 时为 {uri, url, size_bytes, sha256, expires_at} 引用对象；"
+                    "s3 时为 {uri, url, size_bytes, sha256, expires_at, hint} 引用对象"
+                    "（url 是相对路径，拼接服务地址后下载，细节见 hint）；"
                     "text 时为字符串"
                 )
             ),
@@ -334,8 +342,8 @@ def _register_check_tool(mcp, task_name, result_model, running_id_getter):
     doc = task_doc(task_name)
     lines = [
         f"查询 {task_name} 任务的执行状态与结果。result_id 由 create_{task_name} 返回。",
-        "返回结构与结果形态见本服务说明（result_type 决定 result 的含义）；"
-        "state=SUCCESS 且 result_type=s3 时请下载后再解析，不要直接读入上下文。",
+        "返回形态与下载方式见本服务说明；state=SUCCESS 且 result_type=s3 时"
+        "请按 result.url 下载后再解析，不要直接读入上下文。",
     ]
     if doc:
         lines.append(f"该任务：{_first_paragraph(doc)}")
