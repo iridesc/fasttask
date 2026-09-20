@@ -2,7 +2,7 @@ from math import pi
 from typing import Union
 from pydantic import BaseModel
 
-from packages.tools import sleep_random, cache_result
+from packages.tools import sleep_random
 
 
 class Params(BaseModel):

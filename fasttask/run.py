@@ -203,14 +203,6 @@ def generate_ssl_certs():
     )
 
 
-def export_default_env(env_key, env_value, force=False):
-    if force or not os.getenv(env_key):
-        os.environ[env_key] = env_value
-        print(
-            f"{log_prefix} {'force set' if force else 'set default'} {env_key}={env_value}"
-        )
-
-
 def show_banner():
     print("""
 

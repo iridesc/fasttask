@@ -2,7 +2,6 @@ import contextlib
 import datetime
 import os
 import sys
-import uuid
 import traceback
 import asyncio
 from enum import Enum
@@ -43,6 +42,7 @@ from utils.task_ops import (
     check_task,
     create_task,
     new_task_id,
+    revoke_task,
     run_task_sync,
 )
 from setting import project_title, project_description, project_summary, project_version
@@ -63,10 +63,6 @@ class ActionResp(BaseModel):
     status: ActionStatus = ActionStatus.failure
     result: Any = ""
     message: str = ""
-
-
-class DownloadFileInfo(BaseModel):
-    file_name: str = "lp.jpg"
 
 
 class ResultIDParams(BaseModel):
@@ -282,42 +278,12 @@ if get_bool_env("API_REVOKE"):
         result_id_params: ResultIDParams,
         username: Annotated[str, Depends(get_current_username)],
     ):
-        resp = ActionResp()
-        result_id = result_id_params.result_id
-        if not result_id.startswith(app.state.RUNNING_ID):
-            resp.message = f"invalid {result_id=} current {app.state.RUNNING_ID=}"
-            return resp
-
-        async_result = celery_app.AsyncResult(result_id)
-
-        state = async_result.state
-        async_result.revoke(terminate=True)
-
-        if state in [
-            TaskState.success.value,
-            TaskState.failure.value,
-            TaskState.revoked.value,
-        ]:
-            resp.message = "task ended or revoked already"
-            resp.status = ActionStatus.success
-
-        elif state == TaskState.pending.value:
-            resp.message = "task is still pending, will revoked later"
-            resp.status = ActionStatus.success
-
-        elif state == TaskState.started.value:
-            resp.message = "task started, revoking now"
-            resp.status = ActionStatus.success
-
-        elif state == TaskState.retry.value:
-            resp.message = "task retrying, revoking now"
-            resp.status = ActionStatus.success
-
-        else:
-            resp.message = f"unknown task state {state=}"
-            resp.status = ActionStatus.failure
-
-        return resp
+        # 与 MCP 的 fasttask_revoke 共用同一实现，避免两边消息不一致
+        status, message = revoke_task(result_id_params.result_id, app.state.RUNNING_ID)
+        return ActionResp(
+            status=ActionStatus[status.lower()],
+            message=message,
+        )
 
 
 def get_task_apis(task_name):

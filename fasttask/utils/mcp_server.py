@@ -39,6 +39,7 @@ from utils.task_ops import (
     create_task,
     load_task_model,
     new_task_id,
+    revoke_task,
     run_task_sync,
     task_doc,
 )
@@ -358,7 +359,6 @@ def _register_run_tool(mcp, task_name, params_model, result_model, running_id_ge
     else:
         _as_structured(run_tool, task_name, result_model)
 
-    doc = task_doc(task_name)
     lines = [f"同步执行 {task_name} 并直接返回结果（结果随本次响应返回）。"]
     if get_bool_env("API_CREATE"):
         # 这里写“优先 create”不是上层知识的重复，而是本工具自身的适用性说明：
@@ -400,26 +400,13 @@ def _register_status_tool(mcp, task_names, running_id_getter):
 
 def _register_revoke_tool(mcp, running_id_getter):
     async def revoke_tool(result_id: str) -> str:
-        running_id = running_id_getter()
-        if not result_id.startswith(running_id):
-            return _json(
-                {
-                    "result_id": result_id,
-                    "status": "FAILURE",
-                    "message": f"{result_id} 不属于当前服务实例 {running_id}",
-                }
-            )
-
-        async_result = celery_app.AsyncResult(result_id)
-        state = async_result.state
-        await asyncio.to_thread(async_result.revoke, terminate=True)
-        return _json(
-            {
-                "result_id": result_id,
-                "status": "SUCCESS",
-                "message": f"已请求撤销（撤销前状态：{state}）",
-            }
+        # 与 HTTP 的 /revoke 共用 task_ops.revoke_task：以前两处各写一遍，
+        # 消息还不一致（HTTP 按状态分四支、这里统一一句话），同一个操作在两条
+        # 通道上给出的解释不同。
+        status, message = await asyncio.to_thread(
+            revoke_task, result_id, running_id_getter()
         )
+        return _json({"result_id": result_id, "status": status, "message": message})
 
     revoke_tool.__name__ = "fasttask_revoke"
     mcp.tool(

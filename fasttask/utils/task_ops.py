@@ -125,6 +125,39 @@ def check_task(result_id, running_id, result_model=None):
     return _payload(result_id, state, result_type, payload)
 
 
+def revoke_task(result_id, running_id):
+    """撤销任务，返回 ``(status, message)``。
+
+    抽到这里是因为 HTTP 的 ``/revoke`` 和 MCP 的 ``fasttask_revoke`` 各写了一遍，
+    而且消息还不一致（HTTP 按状态分四支、MCP 统一一句话）—— 同一个操作在两条通道
+    上给出的解释不同，调用方看到的结论也随通道变化。这与 create/check/run 的问题是
+    同一类，所以放在同一层。
+
+    ``status`` 用字符串（与 ``api.ActionStatus`` 的取值对齐），这样两边都不必依赖
+    对方的类型；``message`` 用英文原文，避免改动既有响应文案。
+    """
+    if not result_id.startswith(running_id):
+        return "FAILURE", f"invalid result_id={result_id} current running_id={running_id}"
+
+    async_result = celery_app.AsyncResult(result_id)
+    state = async_result.state
+    async_result.revoke(terminate=True)
+
+    if state in (
+        TaskState.success.value,
+        TaskState.failure.value,
+        TaskState.revoked.value,
+    ):
+        return "SUCCESS", "task ended or revoked already"
+    if state == TaskState.pending.value:
+        return "SUCCESS", "task is still pending, will revoked later"
+    if state == TaskState.started.value:
+        return "SUCCESS", "task started, revoking now"
+    if state == TaskState.retry.value:
+        return "SUCCESS", "task retrying, revoking now"
+    return "FAILURE", f"unknown task state state={state}"
+
+
 def run_task_sync(task_name, params_dict, task_id, result_model=None):
     """同步执行任务并返回结果（本地立即执行，不进入队列）。
 

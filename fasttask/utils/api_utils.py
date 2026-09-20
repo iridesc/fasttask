@@ -10,7 +10,7 @@ import string
 from lazy_action.lazy_action import lazy_action
 from fastapi import HTTPException, status
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
-from fastapi import Depends, HTTPException, status, UploadFile
+from fastapi import Depends, UploadFile
 from typing import Any, Annotated, Optional
 from redis.asyncio import Redis
 import asyncio
