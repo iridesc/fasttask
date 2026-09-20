@@ -73,20 +73,17 @@ run_<task> 只在你需要在本轮对话里立即拿到结果时使用，不要
 - s3  ：结果已外置到对象存储，result 是引用（含预签名 url）
 - text：result 是错误信息（失败时含完整 traceback）或状态文本
 
-什么时候会外置（由服务端的 RESULT_TYPE 配置决定，不由调用方控制）：
-- JSON：一律不外置，结果始终内联
-- S3  ：一律外置
-- AUTO：超过阈值才外置
-所以看到 result_type=s3 只说明服务端开了外置，与本次结果大小无关。
+下载外置结果：result.url 就是带签名的下载地址，两种形态都有可能，
+看开头是不是 http 即可判断：
 
-如何下载外置结果：result.url 是**相对路径**，它的前缀就是
-**你在 MCP 客户端里配置的那个服务地址**（去掉末尾的 /mcp 路径）。
-例如你配的是 https://host:9001/mcp，下载地址就是 https://host:9001 + result.url：
+    完整地址（直接下载）
+    curl -s -o result.json "https://host:9014/fasttask-results/...?X-Amz-..."
 
-    curl -s -o result.json "https://<你配置的服务地址><result.url>"
-    jq '.some_field' result.json
+    相对路径（拼上你配置本服务时用的地址，去掉末尾的 /mcp）
+    curl -s -o result.json "https://<服务地址>/fasttask-results/...?X-Amz-..."
 
-不要把整个结果读入上下文；预签名地址有时效，过期后重新调用查询接口即可。
+下载后用 jq 等工具按需提取字段，不要把整个结果读入上下文。
+预签名地址有时效，过期后重新调用查询接口即可拿到新地址。
 """
 
 
