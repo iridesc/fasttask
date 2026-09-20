@@ -296,6 +296,20 @@ FastTask 内建文件自动过期删除机制，由 Supervisor 管理的独立�
 - **TASK_QUEUE_PORT**：Redis 任务队列端口。`single_node` 和 `distributed_master` 默认为 `6379`
 - **TASK_QUEUE_PASSWD**：Redis 密码。`single_node` 默认为 `passwd`；`distributed_master` 和 `distributed_worker` 为必填
 - **UVICORN_WORKERS**：Uvicorn worker 数量，默认为 2
+- **TLS_CN**：HTTPS 自签证书的 CN（同时写入 SAN），默认为 `localhost`。服务不放在本机、客户端用 IP 或域名访问时**必须设置**，否则 TLS 主机名校验失败（Node 系客户端会报 `self-signed certificate` / `ERR_TLS_CERT_ALTNAME_INVALID`）。
+
+  ```yaml
+  environment:
+    - TLS_CN=10.24.103.95          # 客户端用 IP 访问
+    # - TLS_CN=fp.example.com      # 客户端用域名访问
+  ```
+
+  证书在首次启动时生成到 `files/fasttask/ssl_cert/`，并把当时的 CN 记录在同目录的 `cert.cn`；
+  **改了 `TLS_CN` 会自动重新生成证书**（客户端需重新信任新证书）。SAN 里始终保留
+  `127.0.0.1` 与 `localhost`，所以容器内的健康检查、同机 curl 不受影响。
+
+  注意：证书始终是自签的，客户端需要信任它（如 Node 系客户端设置 `NODE_EXTRA_CA_CERTS`
+  指向 `files/fasttask/ssl_cert/cert.pem`）。
 
 ## 任务执行
 
@@ -420,7 +434,8 @@ claude mcp add --transport http fasttask https://10.0.0.1:9001/mcp \
 注意事项：
 
 - 客户端访问 `/mcp` 时会经历一次 307 跳转（`/mcp` → `/mcp/`），官方 MCP 客户端会自动跟随
-- 容器使用自签证书时，客户端需要信任该证书（如 Node 系客户端设置 `NODE_EXTRA_CA_CERTS`）
+- 容器使用自签证书时，客户端需要信任该证书（如 Node 系客户端设置 `NODE_EXTRA_CA_CERTS`）。
+  若客户端用 IP 或域名访问，还需把 `TLS_CN` 设成该地址，否则会因证书 CN/SAN 不匹配而失败
 - MCP 传输为无状态模式：任务状态由 `result_id` 定位，服务重启后依然可用
 - 工具数量随任务数增长（每个任务最多 3 个），可用 `ENABLED_TASKS` 控制暴露范围
 

@@ -1,4 +1,5 @@
 # run.py
+import ipaddress
 import os
 import shutil
 import subprocess
@@ -63,29 +64,69 @@ def init_dir(dir_path):
 def generate_ssl_certs():
     ssl_keyfile = os.environ["SSL_KEYFILE"]
     ssl_certfile = os.environ["SSL_CERTFILE"]
-    if not os.path.isfile(ssl_keyfile) or not os.path.isfile(ssl_certfile):
-        subprocess.run(
-            [
-                "openssl",
-                "req",
-                "-x509",
-                "-nodes",
-                "-newkey",
-                "rsa:4096",
-                "-keyout",
-                ssl_keyfile,
-                "-out",
-                ssl_certfile,
-                "-days",
-                "365",
-                "-subj",
-                "/CN=localhost",
-            ],
-            check=True,
-        )
+    cn_marker = os.path.join(os.environ["SSL_CERT_DIR"], "cert.cn")
+
+    # TLS_CN 决定证书的 CN/SAN。默认 localhost（与历史行为一致）。
+    tls_cn = os.environ.get("TLS_CN", "").strip() or "localhost"
+
+    # 证书已存在且 CN 未变时复用，避免每次重启都重新生成（客户端需重新信任）。
+    if os.path.isfile(ssl_keyfile) and os.path.isfile(ssl_certfile):
+        try:
+            with open(cn_marker, encoding="utf-8") as f:
+                existing_cn = f.read().strip()
+        except OSError:
+            existing_cn = ""
+        if existing_cn == tls_cn:
+            return
+        # 旧证书是其他 CN 生成的（或有历史遗留），重建
         print(
-            f"{log_prefix} SSL certificates generated in {os.environ['SSL_CERT_DIR']}"
+            f"{log_prefix} TLS_CN changed ('{existing_cn or 'unknown'}' -> "
+            f"'{tls_cn}'), regenerating SSL certificates"
         )
+        for stale in (ssl_keyfile, ssl_certfile):
+            try:
+                os.remove(stale)
+            except OSError:
+                pass
+
+    # 现代 TLS 客户端只校验 SAN、不再看 CN，所以 CN 与 SAN 都要按 TLS_CN 生成。
+    try:
+        ipaddress.ip_address(tls_cn)
+        san_entries = [f"IP:{tls_cn}"]
+    except ValueError:
+        san_entries = [f"DNS:{tls_cn}"]
+    # 保留本机访问能力（容器内健康检查、同机 curl 等）
+    for extra in ("IP:127.0.0.1", "DNS:localhost"):
+        if extra.split(":", 1)[1] != tls_cn:
+            san_entries.append(extra)
+
+    subprocess.run(
+        [
+            "openssl",
+            "req",
+            "-x509",
+            "-nodes",
+            "-newkey",
+            "rsa:4096",
+            "-keyout",
+            ssl_keyfile,
+            "-out",
+            ssl_certfile,
+            "-days",
+            "365",
+            "-subj",
+            f"/CN={tls_cn}",
+            "-addext",
+            f"subjectAltName={','.join(san_entries)}",
+        ],
+        check=True,
+    )
+    with open(cn_marker, "w", encoding="utf-8") as f:
+        f.write(tls_cn)
+    print(
+        f"{log_prefix} SSL certificates generated in {os.environ['SSL_CERT_DIR']} "
+        f"(CN={tls_cn}, SAN={','.join(san_entries)})"
+    )
 
 
 def export_default_env(env_key, env_value, force=False):
@@ -208,6 +249,9 @@ env_type_to_envs = {
             force_default=True,
             is_print_env=False,
         ),
+        # 自签证书的 CN/SAN。客户端用 IP 或域名访问时把它设成该地址，
+        # 否则默认 CN=localhost 会导致任何非本机访问都报主机名不匹配。
+        Env("TLS_CN", "localhost"),
         Env(
             "SSL_CERTFILE",
             "/fasttask/files/fasttask/ssl_cert/cert.pem",
