@@ -425,12 +425,27 @@ claude mcp add --transport http fasttask https://10.0.0.1:9001/mcp \
 | `fasttask_status` | `POST /status_info` | `API_STATUS_INFO` |
 | `fasttask_revoke` | `POST /revoke` | `API_REVOKE` |
 
-工具参数直接来自任务自己的 `Params` 模型（字段说明、默认值、约束都会带到 MCP schema 里）；
-任务的模块 docstring 会作为工具说明的一部分，建议给每个任务写一句用途说明。
+工具参数直接来自任务自己的 `Params` 模型（字段说明、默认值、约束都会带到 MCP schema 里）。
 
 `check_*` 的返回值遵循 `/check` 的 `result_type` 约定：小结果直接返回；
 外置到对象存储的结果只返回引用与预签名下载地址，调用方下载到本地后再解析，
 避免把几十 MB 的结果灌进模型上下文。
+
+### 给 AI 的描述分两层
+
+MCP 里只有两个放描述的位置，FastTask 对应地拆成两层：
+
+| 位置 | 内容 | 来源 |
+|---|---|---|
+| `instructions`（全局一份） | ① 模块身份（`setting.py` 的 title/summary/description/version）<br>② 平台与调用约定（工具族、通用接口、典型流程、结果形态、大结果处理）<br>③ 任务一览（每个任务一行摘要） | 模块作者 + 框架固定 |
+| `tools[].description`（每个工具一份） | 该任务的完整业务说明（做什么 / 什么时候用 / 边界行为） | 任务模块 docstring |
+
+所以 **任务 docstring 建议写成“首段一句话 + 空行 + 详细说明”**：
+首段会进 `instructions` 的任务一览，全文进该任务的工具说明。
+
+此外每个工具还声明了 `outputSchema`：外层是固定的 `result_id` / `state` / `result_type` / `result`，
+`result` 用 `anyOf` 覆盖 `json`（任务自己的 `Result` 模型）/ `s3`（引用对象）/ `text`（错误信息）
+三种形态，AI 不必先跑一次来猜返回结构。
 
 认证复用 FastTask 既有的凭据：`user_to_passwd.json` 存在时要求 HTTP Basic，
 不存在时匿名放行（与其它接口完全一致）。

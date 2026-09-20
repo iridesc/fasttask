@@ -49,23 +49,102 @@ MCP_SERVER_NAME = "fasttask"
 # run_* 是同步执行、结果直接进上下文；超过该体量就截断并引导改用 create + check
 _RUN_INLINE_LIMIT = 200 * 1024
 
-_MCP_INSTRUCTIONS = """FastTask 异步任务平台。
+# MCP 的说明分两层：instructions（全局一份，讲“这个模块是什么、平台怎么用”）
+# 与 tools[].description（每个工具一份，讲“这个任务干什么”）。
+# 下面这段是平台约定，对所有 FastTask 封装的模块都一样。
+_FRAMEWORK_GUIDE = """本模块使用 FastTask 异步任务平台封装，平台更多信息见
+https://github.com/iridesc/fasttask （公开仓库，内网环境可能不可达）。
 
-每个任务会提供以下工具（取决于服务端开启的接口）：
-- create_<task>：创建异步任务，立即返回 result_id
+本项目基于 FastTask，由它负责任务的创建、调度与执行。每个任务会提供以下工具
+（取决于模块配置）：
+- create_<task>：创建异步任务，立即返回 result_id，任务进入队列
 - check_<task>：查询任务状态与结果，用 result_id 查询
-- run_<task>：同步执行，仅适合秒级完成的任务
+- run_<task>：同步执行，结果随本次响应返回（result_id 为空，不可用于 check），
+  仅适合秒级完成的任务
+除非工具说明里明确写了适合同步执行，否则一律优先走 create + check。
+
+通用接口：
+- fasttask_status：查看在线 worker、各任务队列积压与近期成功/失败统计
+- fasttask_revoke：用已有的 result_id 撤销排队中或执行中的任务
 
 典型流程：create_<task> 拿到 result_id → check_<task> 轮询 → 取回结果。
 
-重要：任务结果可能很大。当 check 返回的 result_type 为 "s3" 时，
-result.url 是一个相对路径（形如 /fasttask-results/20260918/xxx.json?X-Amz-...），
-把它拼在本 FastTask 服务的地址后面即可下载。请下载到本地后再用 jq 等工具
-按需提取字段，不要把整个结果读入上下文：
+结果形态：check 返回的 result_type 决定 result 的含义
+- json：result 即任务结果，可直接使用
+- s3  ：结果已外置到对象存储，result 是引用（含预签名 url）
+- text：result 是错误信息（失败时含完整 traceback）或状态文本
+
+重要：任务结果可能很大。当 result_type 为 "s3" 时，result.url 是一个相对路径
+（形如 /fasttask-results/20260918/xxx.json?X-Amz-...），把它拼在本 FastTask 服务
+的地址后面即可下载。请下载到本地后再用 jq 等工具按需提取字段，不要把整个结果
+读入上下文：
 
     curl -s -o result.json "https://<fasttask 地址><result.url>"
     jq '.some_field' result.json
 """
+
+
+# --------------------------------------------------------------------------- #
+# instructions 的组装：① 模块身份 → ② 平台约定 → ③ 任务一览
+# --------------------------------------------------------------------------- #
+def _first_paragraph(text):
+    """取 docstring 的首段（遇到空行即停）作为一句话摘要。
+
+    docstring 常写成“首段一句话 + 空行 + 详细说明”，首段正好适合当任务一览。
+    """
+    if not text:
+        return ""
+    lines = []
+    for line in text.splitlines():
+        if not line.strip():
+            break
+        lines.append(line.strip())
+    return " ".join(lines)
+
+
+def build_module_identity():
+    """① 模块身份：来自模块自己的 setting.py。
+
+    以前 setting.py 只喂给 FastAPI/Swagger，对 MCP 客户端不可见，导致 AI 打开
+    这个服务时不知道“整体是干什么的”，只能从单个任务的 docstring 拼凑。
+    """
+    try:
+        from setting import (
+            project_description,
+            project_summary,
+            project_title,
+            project_version,
+        )
+    except Exception:  # noqa: BLE001 - 模块信息缺失不应影响工具可用性
+        return ""
+    parts = [
+        str(project_title or "").strip(),
+        str(project_summary or "").strip(),
+        str(project_description or "").strip(),
+        str(project_version or "").strip(),
+    ]
+    return "\n".join(p for p in parts if p)
+
+
+def build_task_catalog(task_names):
+    """③ 任务一览：每个任务一行摘要，取模块 docstring 的首段。"""
+    if not task_names:
+        return ""
+    lines = ["本模块提供以下任务："]
+    for name in task_names:
+        summary = _first_paragraph(task_doc(name))
+        lines.append(f"- {name}：{summary}" if summary else f"- {name}")
+    return "\n".join(lines)
+
+
+def build_instructions(task_names):
+    """拼装 MCP instructions：① 模块身份 + ② 平台约定 + ③ 任务一览。"""
+    blocks = [
+        build_module_identity(),
+        _FRAMEWORK_GUIDE,
+        build_task_catalog(task_names),
+    ]
+    return "\n\n".join(block for block in blocks if block)
 
 
 # --------------------------------------------------------------------------- #
@@ -75,8 +154,13 @@ def _json(data) -> str:
     return json.dumps(data, ensure_ascii=False, indent=2)
 
 
-def _flat_signature(model_cls):
-    """把 Pydantic 模型摊平为 MCP 工具签名（避免参数被包一层 params）。"""
+def _flat_signature(model_cls, return_annotation=inspect.Parameter.empty):
+    """把 Pydantic 模型摊平为 MCP 工具签名（避免参数被包一层 params）。
+
+    注意：设置了 ``__signature__`` 之后，``inspect.signature()`` 会以它为准，
+    而 FastMCP 正是从这里读返回类型来生成 outputSchema —— 所以返回注解必须
+    在同一个 Signature 上带出去，否则只改 ``__annotations__`` 不生效。
+    """
     return inspect.Signature(
         [
             inspect.Parameter(
@@ -86,7 +170,8 @@ def _flat_signature(model_cls):
                 annotation=Annotated[(field.annotation, field)],
             )
             for name, field in model_cls.model_fields.items()
-        ]
+        ],
+        return_annotation=return_annotation,
     )
 
 
@@ -116,17 +201,105 @@ def _truncate_run_result(payload: dict, task_name: str) -> dict:
 # --------------------------------------------------------------------------- #
 # 工具注册
 # --------------------------------------------------------------------------- #
-def _register_create_tool(mcp, task_name, params_model, running_id_getter):
-    async def create_tool(**kwargs) -> str:
+def _build_output_model(task_name, result_model):
+    """构造工具返回值的 Pydantic 模型，让 MCP 生成有意义的 outputSchema。
+
+    FastMCP 只从返回类型注解生成 outputSchema，而 FastTask 的返回结构是动态的，
+    所以这里动态建一个模型。外层字段固定；result 的形态由 result_type 决定：
+
+    - json：任务自己定义的 Result 模型
+    - s3  ：对象存储引用（含预签名 url）
+    - text：错误信息/状态文本
+    """
+    from typing import Literal, Optional, Union
+
+    from pydantic import Field, create_model
+
+    result_types = tuple(t.value for t in ResultType)
+    # result 在 json 时是任务的 Result 模型，s3 时是引用字典，text 时是字符串。
+    # 用 Union 让 outputSchema 里能看到任务真实的返回结构，而不是笼统一个 object。
+    if result_model is not None:
+        result_annotation = Union[result_model, dict, str]
+    else:
+        result_annotation = Union[dict, str]
+
+    return create_model(
+        f"{task_name}_ToolResult",
+        result_id=(
+            str,
+            Field(
+                default="",
+                description=(
+                    "异步任务 ID。create_* 返回后用它去 check_*；"
+                    "run_* 为同步执行，该字段为空且不可用于 check"
+                ),
+            ),
+        ),
+        state=(
+            str,
+            Field(
+                description=(
+                    "任务状态：PENDING(排队) / STARTED(执行中) / RETRY(重试) / "
+                    "SUCCESS(成功) / FAILURE(失败) / REVOKED(已撤销)"
+                )
+            ),
+        ),
+        result_type=(
+            Literal[result_types],
+            Field(
+                description=(
+                    "决定 result 的含义：json=任务结果本身；"
+                    "s3=结果已外置，result 是含预签名 url 的引用；"
+                    "text=错误信息或状态文本"
+                )
+            ),
+        ),
+        result=(
+            result_annotation,
+            Field(
+                description=(
+                    "任务结果。result_type=json 时为 anyOf 中第一个结构；"
+                    "s3 时为 {uri, url, size_bytes, sha256, expires_at} 引用对象；"
+                    "text 时为字符串"
+                )
+            ),
+        ),
+        truncated=(
+            Optional[bool],
+            Field(default=None, description="仅 run_*：结果过大时被截断为 true"),
+        ),
+        hint=(
+            Optional[str],
+            Field(default=None, description="仅 run_*：结果被截断时的处理建议"),
+        ),
+    )
+
+
+def _as_structured(tool_fn, task_name, result_model):
+    """把工具函数的返回注解换成动态模型。
+
+    这样 FastMCP 会生成 outputSchema，并把返回值同时作为结构化内容返回，
+    调用方不必先跑一次来猜返回形状。
+    """
+    tool_fn.__annotations__["return"] = _build_output_model(task_name, result_model)
+    return tool_fn
+
+
+def _register_create_tool(mcp, task_name, params_model, result_model, running_id_getter):
+    async def create_tool(**kwargs) -> dict:
         params = params_model(**kwargs) if params_model is not None else kwargs
         payload = await asyncio.to_thread(
             create_task, task_name, params.model_dump(), running_id_getter()
         )
-        return _json(payload)
+        return payload
 
     create_tool.__name__ = f"create_{task_name}"
     if params_model is not None:
-        create_tool.__signature__ = _flat_signature(params_model)
+        create_tool.__signature__ = _flat_signature(
+            params_model, _build_output_model(task_name, result_model)
+        )
+    else:
+        _as_structured(create_tool, task_name, result_model)
 
     doc = task_doc(task_name)
     lines = [f"创建 {task_name} 异步任务，立即返回 result_id，任务在后台排队执行。"]
@@ -142,36 +315,31 @@ def _register_create_tool(mcp, task_name, params_model, running_id_getter):
 
 
 def _register_check_tool(mcp, task_name, result_model, running_id_getter):
-    async def check_tool(result_id: str) -> str:
+    async def check_tool(result_id: str) -> dict:
         payload = await asyncio.to_thread(
             check_task, result_id, running_id_getter(), result_model
         )
-        return _json(payload)
+        return payload
 
     check_tool.__name__ = f"check_{task_name}"
+    _as_structured(check_tool, task_name, result_model)
 
-    description = (
-        f"查询 {task_name} 任务的执行状态与结果。\n"
-        "参数 result_id：create 工具返回的任务 ID（服务重启后依然有效）。\n"
-        "返回字段：\n"
-        "- state：PENDING(排队) / STARTED(执行中) / RETRY(重试) / "
-        "SUCCESS(成功) / FAILURE(失败) / REVOKED(已撤销)\n"
-        "- result_type：json / s3 / text，决定 result 的含义；\n"
-        "  json → result 即任务结果；text → result 为错误信息（含完整 traceback）；\n"
-        "  s3 → 结果已外置，result.url 是预签名下载路径。\n"
-        "\n"
-        "重要：结果可能非常大（几十 MB）。当 result_type=s3 时，result.url 是相对\n"
-        "路径（形如 /fasttask-results/20260918/xxx.json?X-Amz-...），请与 FastTask\n"
-        "服务地址拼接后下载到本地再解析，不要直接读取内容：\n"
-        '  curl -s -o result.json "https://<fasttask 地址><result.url>"\n'
-        "  jq '.some_field' result.json\n"
-        "下载地址有时效，过期后重新调用本工具即可获得新地址。"
-    )
-    mcp.tool(name=check_tool.__name__, description=description)(check_tool)
+    # 参数/状态/结果形态这些通用约定已写在 instructions 里，这里只补本任务特有的部分，
+    # 避免每个工具重复一大段。
+    doc = task_doc(task_name)
+    lines = [
+        f"查询 {task_name} 任务的执行状态与结果。result_id 由 create_{task_name} 返回。",
+        "返回结构与结果形态见本服务说明（result_type 决定 result 的含义）；"
+        "state=SUCCESS 且 result_type=s3 时请下载后再解析，不要直接读入上下文。",
+    ]
+    if doc:
+        lines.append(f"该任务：{_first_paragraph(doc)}")
+    lines.append(f"返回结果如需再次获取，直接重调本工具（预签名地址有时效）。")
+    mcp.tool(name=check_tool.__name__, description="\n".join(lines))(check_tool)
 
 
 def _register_run_tool(mcp, task_name, params_model, result_model, running_id_getter):
-    async def run_tool(**kwargs) -> str:
+    async def run_tool(**kwargs) -> dict:
         params = params_model(**kwargs) if params_model is not None else kwargs
         payload = await asyncio.to_thread(
             run_task_sync,
@@ -180,11 +348,15 @@ def _register_run_tool(mcp, task_name, params_model, result_model, running_id_ge
             new_task_id(running_id_getter()),
             result_model,
         )
-        return _json(_truncate_run_result(payload, task_name))
+        return _truncate_run_result(payload, task_name)
 
     run_tool.__name__ = f"run_{task_name}"
     if params_model is not None:
-        run_tool.__signature__ = _flat_signature(params_model)
+        run_tool.__signature__ = _flat_signature(
+            params_model, _build_output_model(task_name, result_model)
+        )
+    else:
+        _as_structured(run_tool, task_name, result_model)
 
     doc = task_doc(task_name)
     lines = [
@@ -268,7 +440,7 @@ def build_mcp_server(task_names, running_id_getter):
 
     mcp = FastMCP(
         MCP_SERVER_NAME,
-        instructions=_MCP_INSTRUCTIONS,
+        instructions=build_instructions(task_names),
         stateless_http=True,  # 多 uvicorn worker 下必须无状态
         json_response=True,  # 纯 JSON 响应，避免 SSE 被中间件缓冲
         # FastMCP 默认的 DNS rebinding 保护只放行 localhost，而 FastTask 实际
@@ -291,7 +463,9 @@ def build_mcp_server(task_names, running_id_getter):
         result_model = load_task_model(task_name, "Result")
 
         if enable_create:
-            _register_create_tool(mcp, task_name, params_model, running_id_getter)
+            _register_create_tool(
+                mcp, task_name, params_model, result_model, running_id_getter
+            )
         if enable_check:
             _register_check_tool(mcp, task_name, result_model, running_id_getter)
         if enable_run:

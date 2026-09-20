@@ -252,7 +252,7 @@ try:
         headers = {"Authorization": AUTH_HEADER}
         async with streamablehttp_client(MCP_URL, headers=headers) as (read, write, _):
             async with ClientSession(read, write) as session:
-                await session.initialize()
+                init_result = await session.initialize()
 
                 section("2. 工具列表（跟随 API_* 开关注册）")
                 listed = await session.list_tools()
@@ -291,6 +291,68 @@ try:
                     text = result.content[0].text if result.content else ""
                     return result, json.loads(text) if text else {}
 
+                section("4. instructions 分层：模块身份 + 平台约定 + 任务一览")
+                instructions = init_result.instructions or ""
+                check(
+                    "① 含模块身份（来自 setting.py）",
+                    "Fasttask" in instructions,
+                    instructions[:120],
+                )
+                check(
+                    "② 含平台约定（工具族与通用接口）",
+                    "create_<task>" in instructions and "fasttask_revoke" in instructions,
+                    "",
+                )
+                check(
+                    "② 说明 run 的 result_id 为空、优先走 create/check",
+                    "result_id 为空" in instructions and "优先走 create + check" in instructions,
+                    "",
+                )
+                check(
+                    "③ 含任务一览（列出本模块任务）",
+                    "本模块提供以下任务" in instructions and "mcp_probe" in instructions,
+                    "",
+                )
+
+                section("5. outputSchema：能看到任务真实的 Result 结构")
+                probe_tool = tool_map["create_mcp_probe"]
+                out_schema = getattr(probe_tool, "outputSchema", None)
+                check("工具声明了 outputSchema", bool(out_schema), "")
+                if out_schema:
+                    props = set(out_schema.get("properties", {}))
+                    check(
+                        "外层字段固定（result_id/state/result_type/result）",
+                        {"result_id", "state", "result_type", "result"} <= props,
+                        props,
+                    )
+                    refs = json.dumps(out_schema.get("$defs", {}), ensure_ascii=False)
+                    check(
+                        "$defs 含任务自己的 Result 模型（不是笼统 object）",
+                        "payload" in refs,
+                        refs[:200],
+                    )
+                    check(
+                        "result 用 anyOf 覆盖 json/s3/text 三种形态",
+                        len(out_schema["properties"]["result"].get("anyOf", [])) >= 3,
+                        out_schema["properties"]["result"],
+                    )
+
+                section("6. 结构化返回：structuredContent 与声明一致")
+                call_result, _ = await call("run_mcp_probe", {"size": 8, "tag": "struct"})
+                structured = getattr(call_result, "structuredContent", None)
+                check("run_* 返回 structuredContent", bool(structured), "")
+                if structured:
+                    check(
+                        "结构化字段与 outputSchema 对齐",
+                        {"result_id", "state", "result_type", "result"} <= set(structured),
+                        list(structured),
+                    )
+                    check(
+                        "run 的 result_id 为空（不可用于 check）",
+                        structured.get("result_id") == "",
+                        structured.get("result_id"),
+                    )
+
                 async def wait_task(result_id, timeout=60):
                     deadline = time.time() + timeout
                     latest = None
@@ -303,7 +365,7 @@ try:
                         await asyncio.sleep(0.4)
                     raise AssertionError(f"任务超时: {latest}")
 
-                section("4. create → check：小结果直接内联")
+                section("7. create → check：小结果直接内联")
                 _, created = await call("create_mcp_probe", {"size": 10, "tag": "mcp"})
                 check("create 返回 result_id", bool(created.get("result_id")), created)
                 result_id = created["result_id"]
@@ -319,7 +381,7 @@ try:
                 )
                 check("tag 透传", checked["result"].get("tag") == "mcp", checked["result"])
 
-                section("5. 大结果：返回 s3 引用而非内容")
+                section("8. 大结果：返回 s3 引用而非内容")
                 _, created = await call("create_mcp_probe", {"size": 20000, "tag": "big"})
                 big = await wait_task(created["result_id"])
                 raw_text_len = len(json.dumps(big, ensure_ascii=False))
@@ -349,7 +411,7 @@ try:
                 except Exception as error:  # noqa: BLE001
                     check("预签名地址可裸下载", False, repr(error))
 
-                section("6. run 同步执行与截断保护")
+                section("9. run 同步执行与截断保护")
                 _, run_small = await call("run_mcp_probe", {"size": 8, "tag": "sync"})
                 check("同步执行成功", run_small["state"] == "SUCCESS", run_small)
                 check(
@@ -384,7 +446,7 @@ try:
                     len(json.dumps(run_big, ensure_ascii=False)),
                 )
 
-                section("7. 全局工具")
+                section("10. 全局工具")
                 _, status = await call("fasttask_status")
                 check("status 返回 running_id", "running_id" in status, status.keys())
                 check("status 含队列积压", "pending_task_count" in status, status.keys())
