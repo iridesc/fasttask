@@ -105,6 +105,32 @@ def _first_paragraph(text):
     return " ".join(lines)
 
 
+# project_summary 紧跟模块名出现在 instructions 最前面，而客户端普遍只展示
+# instructions 的前几百字符（pi 的阈值是 300）。summary 过长会把「怎么调用」的
+# 规则挤出可见窗口，所以超长时启动告警 —— 不报错，因为这只是可读性问题。
+_SUMMARY_MAX_LENGTH = 100
+
+
+def warn_if_summary_too_long():
+    """setting.project_summary 过长时告警，提醒它挤占了 instructions 的可见窗口。"""
+    try:
+        from setting import project_summary
+    except Exception:  # noqa: BLE001 - 缺 setting 时 build_module_identity 另有处理
+        return
+    summary = str(project_summary or "").strip()
+    if len(summary) > _SUMMARY_MAX_LENGTH:
+        # flush=True 必需：这个进程的 stdout 常被重定向到文件/管道（supervisord、nohup），
+        # 此时是块缓冲，不 flush 的话告警会卡在缓冲区里，等进程退出才落盘 ——
+        # 而那正是我们最需要看到它的时点之后。
+        print(
+            f"FastTask ---> [warn] setting.project_summary 长度 {len(summary)} "
+            f"超过 {_SUMMARY_MAX_LENGTH}：它位于 MCP instructions 最前面，过长会"
+            "把「怎么调用」的规则挤出客户端的可见窗口（多数客户端只展示前几百字符）。"
+            "建议压成一句话定位。",
+            flush=True,
+        )
+
+
 def build_module_identity():
     """① 模块身份：来自模块自己的 setting.py。
 
@@ -353,6 +379,15 @@ def _register_run_tool(mcp, task_name, params_model, result_model, running_id_ge
 
     doc = task_doc(task_name)
     lines = [f"同步执行 {task_name} 并直接返回结果（结果随本次响应返回）。"]
+    if get_bool_env("API_CREATE"):
+        # 这里写“优先 create”不是上层知识的重复，而是本工具自身的适用性说明：
+        # “什么时候该用我、什么时候不该用我”。实战验证过——只把它放在
+        # instructions 里无效，因为客户端普遍只展示 instructions 的前几百字符
+        # （pi 的阈值是 300），而 AI 一定会读 describe 的结果。
+        lines.append(
+            f"优先使用 create_{task_name} + check_{task_name}；"
+            "本工具仅当你需要立刻拿到结果时使用，且不产生可查询的任务 id。"
+        )
     lines.extend(_task_business_lines(task_name, run_tool.__name__))
     mcp.tool(name=run_tool.__name__, description="\n".join(lines))(run_tool)
 
@@ -419,6 +454,8 @@ def build_mcp_server(task_names, running_id_getter):
     """构建 FastMCP 实例，并按 API_* 开关动态注册任务工具。"""
     from mcp.server.fastmcp import FastMCP
     from mcp.server.transport_security import TransportSecuritySettings
+
+    warn_if_summary_too_long()
 
     mcp = FastMCP(
         MCP_SERVER_NAME,
