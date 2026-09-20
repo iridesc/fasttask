@@ -121,8 +121,11 @@ def build_module_identity():
         str(project_title or "").strip(),
         str(project_summary or "").strip(),
         str(project_description or "").strip(),
-        str(project_version or "").strip(),
     ]
+    version = str(project_version or "").strip()
+    if version:
+        # 加前缀，避免版本号在一片描述文字里单独成行、看不出是什么
+        parts.append(f"版本：{version}")
     return "\n".join(p for p in parts if p)
 
 
