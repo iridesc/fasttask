@@ -20,6 +20,11 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import Response
 
+from utils.request_context import (
+    reset_request_base_url,
+    set_request_base_url,
+)
+
 
 CONF_DIR = os.environ["CONF_DIR"]
 redis_params = {
@@ -605,3 +610,33 @@ class LoggingMiddleware(BaseHTTPMiddleware):
             headers=dict(response.headers),
             media_type=response.media_type,
         )
+
+
+class RequestContextMiddleware(BaseHTTPMiddleware):
+    """把当前请求的对外地址记录到 contextvar，供深层代码生成绝对 URL。
+
+    背景：外置结果的预签名 URL 原本只给相对路径，要调用方自己拼服务地址；但调用方
+    （尤其 AI 客户端）通常并不知道自己被配置成了什么地址。所以这里把地址记下来，
+    预签名时若拿得到就返回完整 URL，拿不到则退回相对路径。
+
+    地址来源依次为：
+    1. ``PUBLIC_HOST``：部署时声明的对外地址，最可靠
+    2. ``X-Forwarded-Host`` + ``X-Forwarded-Proto``：反代透传的原始地址
+    3. ``Host``：直连场景下就是客户端访问的地址
+    """
+
+    async def dispatch(self, request: Request, call_next):
+        public_host = os.environ.get("PUBLIC_HOST", "").strip()
+        if public_host:
+            # scheme 固定 https：FastTask 的 API 一律走 TLS
+            base_url = f"https://{public_host}"
+        else:
+            scheme = request.headers.get("x-forwarded-proto") or request.url.scheme
+            host = request.headers.get("x-forwarded-host") or request.headers.get("host")
+            base_url = f"{scheme}://{host}" if host else None
+        token = set_request_base_url(base_url)
+        try:
+            return await call_next(request)
+        finally:
+            # 必须复原：同一 worker 会复用线程处理后续请求
+            reset_request_base_url(token)

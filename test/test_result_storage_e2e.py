@@ -242,12 +242,18 @@ try:
         check("result_type=s3", response["result_type"] == "s3", response["result_type"])
         reference = response["result"]
         check("返回预签名 url", bool(reference.get("url")), reference)
-        check("返回 uri", str(reference.get("uri", "")).startswith("s3://"), reference)
         check("size_bytes 合理", (reference.get("size_bytes") or 0) > 5000, reference)
+        check(
+            "引用只含四个字段（无 uri / url_error / hint）",
+            set(reference) == {"size_bytes", "sha256", "url", "expires_at"},
+            list(reference),
+        )
 
-        check("url 是相对路径", reference["url"].startswith("/"), reference["url"][:60])
-        # 相对路径拼上 API 地址 —— 即走 FastTask 端口的代理下载（无需额外端口）
-        download_url = f"{API_BASE}{reference['url']}"
+        # 服务端能确定对外地址时直接给出完整 URL（可直接下载）；拿不到时才是相对路径。
+        # 两种形态都要能正常使用。
+        is_absolute = reference["url"].startswith("http")
+        check("url 是可直接访问的地址（绝对或相对）", bool(reference["url"]), reference["url"][:60])
+        download_url = reference["url"] if is_absolute else f"{API_BASE}{reference['url']}"
         try:
             with urllib.request.urlopen(download_url, timeout=15) as raw:
                 body = raw.read()
@@ -307,7 +313,11 @@ try:
             str(run_resp["result"])[:120],
         )
         reference = run_resp["result"]
-        downloaded = httpx.get(f"{API_BASE}{reference['url']}", timeout=30)
+        # url 可能是绝对地址（服务端能确定对外地址时），也可能仍是相对路径
+        _url = reference["url"]
+        if not _url.startswith("http"):
+            _url = f"{API_BASE}{_url}"
+        downloaded = httpx.get(_url, timeout=30)
         check("外置结果可经代理下载", downloaded.status_code == 200, downloaded.status_code)
         stored = downloaded.json()
         check(

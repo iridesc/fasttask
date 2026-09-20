@@ -129,7 +129,7 @@ fasttask/
 
 - `NODE_TYPE`：部署模式，必填（`single_node` / `distributed_master` / `distributed_worker`）
 - `UVICORN_WORKERS`：API 的 uvicorn worker 进程数，默认 2
-- `TLS_CN`：HTTPS 自签证书的 CN/SAN，默认 `localhost`。客户端用 IP 或域名访问时必须设置（否则 TLS 主机名校验失败）；支持逗号分隔多值（CN 取第一个，SAN 含全部），改了会自动重新生成证书
+- `PUBLIC_HOST`：客户端访问本服务的地址（可带端口），默认空。一处决定自签证书的 CN/SAN（端口自动剥离）与外置结果的下载地址前缀；客户端用 IP/域名访问时必须设置，改了会自动重新生成证书
 - `SOFT_TIME_LIMIT`：任务软超时（秒），默认 86400，超时后发送 SIGKILL
 - `TIME_LIMIT`：硬超时，默认 `SOFT_TIME_LIMIT + 60`
 - `VISIBILITY_TIMEOUT`：Celery broker 可见性超时，默认 `TIME_LIMIT + 60`

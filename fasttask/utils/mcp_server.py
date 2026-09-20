@@ -46,10 +46,6 @@ from utils.tools import get_bool_env
 MCP_PATH = "/mcp"
 MCP_SERVER_NAME = "fasttask"
 
-# run_* 走 JSON（未开外置）时结果直接进上下文；超过该体量就截断并引导改用 create + check。
-# 阈值取 100KB：约两三万 token，再大就会明显挤占上下文。
-# 开了 RESULT_TYPE=S3/AUTO 时大结果会直接外置，不走这条截断逻辑。
-_RUN_INLINE_LIMIT = 100 * 1024
 
 # MCP 的说明分两层：instructions（全局一份，讲“这个模块是什么、平台怎么用”）
 # 与 tools[].description（每个工具一份，讲“这个任务干什么”）。
@@ -187,29 +183,6 @@ def _flat_signature(model_cls, return_annotation=inspect.Parameter.empty):
     )
 
 
-def _truncate_run_result(payload: dict, task_name: str) -> dict:
-    """run_* 的结果直接进上下文：内联结果过大时截断并引导走异步流程。"""
-    if payload.get("result_type") != ResultType.json.value:
-        return payload
-
-    serialized = json.dumps(payload.get("result"), ensure_ascii=False)
-    if len(serialized) <= _RUN_INLINE_LIMIT:
-        return payload
-
-    return {
-        "result_id": payload.get("result_id"),
-        "state": payload.get("state"),
-        "result_type": ResultType.text.value,
-        "truncated": True,
-        "result": serialized[:1024],
-        "hint": (
-            f"同步执行的结果约 {len(serialized)} 字节，已截断以避免塞满上下文。"
-            f"需要完整结果请改用 create_{task_name} + check_{task_name}"
-            "（大结果会自动外置到对象存储并提供下载地址）。"
-        ),
-    }
-
-
 # --------------------------------------------------------------------------- #
 # 工具注册
 # --------------------------------------------------------------------------- #
@@ -223,7 +196,7 @@ def _build_output_model(task_name, result_model):
     - s3  ：对象存储引用（含预签名 url）
     - text：错误信息/状态文本
     """
-    from typing import Literal, Optional, Union
+    from typing import Literal, Union
 
     from pydantic import Field, create_model
 
@@ -271,19 +244,11 @@ def _build_output_model(task_name, result_model):
             Field(
                 description=(
                     "任务结果。result_type=json 时为 anyOf 中第一个结构；"
-                    "s3 时为 {uri, url, size_bytes, sha256, expires_at, hint} 引用对象"
-                    "（url 是相对路径，拼接服务地址后下载，细节见 hint）；"
-                    "text 时为字符串"
+                    "s3 时为 {size_bytes, sha256, url, expires_at} 引用对象"
+                    "（url 是可直接下载的地址：可能是完整 URL，也可能是相对路径，"
+                    "后者需拼上服务地址）；text 时为字符串（错误信息或状态说明）"
                 )
             ),
-        ),
-        truncated=(
-            Optional[bool],
-            Field(default=None, description="仅 run_*：结果过大时被截断为 true"),
-        ),
-        hint=(
-            Optional[str],
-            Field(default=None, description="仅 run_*：结果被截断时的处理建议"),
         ),
     )
 
@@ -361,7 +326,7 @@ def _register_run_tool(mcp, task_name, params_model, result_model, running_id_ge
             new_task_id(running_id_getter()),
             result_model,
         )
-        return _truncate_run_result(payload, task_name)
+        return payload
 
     run_tool.__name__ = f"run_{task_name}"
     if params_model is not None:
@@ -381,7 +346,7 @@ def _register_run_tool(mcp, task_name, params_model, result_model, running_id_ge
         f"create_{task_name} + check_{task_name}（后台执行，不会阻塞本次调用，"
         "大结果会自动外置）。",
         "执行期间会一直占用本次调用，超出客户端等待时间会失败。",
-        "小结果直接返回；过大时会截断并给出提示，或外置为可下载的引用。",
+        "结果要么全量返回，要么（服务端开启外置且超过阈值时）返回可下载的 s3 引用。",
         # 这里刻意强调：run 的结果随本次响应一次性交付，不产生可查询的任务 id。
         "注意：结果已随本次响应返回，不会产生可查询的任务 id（返回的 "
         "result_id 为空）；请不要拿它去调 check，需要可查询的任务请用 "

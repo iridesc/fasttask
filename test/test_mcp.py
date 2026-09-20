@@ -389,7 +389,11 @@ try:
                 check("result_type=s3", big["result_type"] == "s3", big["result_type"])
                 reference = big["result"]
                 check("给出预签名 url", bool(reference.get("url")), reference)
-                check("给出 uri", str(reference.get("uri", "")).startswith("s3://"), reference)
+                check(
+                    "引用只有四个字段（uri 已移除）",
+                    set(reference) == {"size_bytes", "sha256", "url", "expires_at"},
+                    list(reference),
+                )
                 check(
                     "返回值体积仍然很小（未塞入 20KB 结果）",
                     raw_text_len < 2000,
@@ -397,11 +401,14 @@ try:
                 )
 
                 check(
-                    "url 是相对路径",
-                    reference["url"].startswith("/"),
+                    "url 是可直接访问的地址（绝对或相对）",
+                    bool(reference["url"]),
                     reference["url"][:60],
                 )
-                download_url = f"{API_BASE}{reference['url']}"
+                # url 可能是绝对地址（服务端能确定对外地址时），也可能仍是相对路径
+                download_url = reference["url"]
+                if not download_url.startswith("http"):
+                    download_url = f"{API_BASE}{download_url}"
                 try:
                     with urllib.request.urlopen(download_url, timeout=15) as resp:
                         body = resp.read()
@@ -436,9 +443,9 @@ try:
                 )
                 if run_big.get("result_type") == "s3":
                     check(
-                        "run 外置的 key 不含 None",
-                        "None" not in str(run_big["result"].get("uri")),
-                        run_big["result"].get("uri"),
+                        "run 外置的结果带可用 url",
+                        bool(run_big["result"].get("url")),
+                        run_big["result"].get("url", "")[:60],
                     )
                 check(
                     "截断后体积可控",

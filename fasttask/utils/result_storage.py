@@ -31,6 +31,8 @@ from urllib.parse import urlparse
 
 from retry import retry
 
+from utils.request_context import get_request_base_url
+
 
 class ResultStorageMode(Enum):
     """``RESULT_TYPE`` 的配置取值（决定结果去向）。"""
@@ -279,47 +281,41 @@ def _iso_utc(dt):
 def build_s3_result_response(payload):
     """把存储层 payload 转成返回给客户端的引用。
 
-    ``url`` 是**相对路径**（形如 ``/<bucket>/<key>?X-Amz-...``）：客户端拼上自己
-    访问 FastTask 的地址即可下载，所以服务端不必知道对外地址，也不需要额外暴露
-    对象存储端口（代理会在转发时把 Host 统一改回内部地址）。
+    返回结构只有四个字段：``size_bytes`` / ``sha256`` / ``url`` / ``expires_at``。
 
-    因为相对路径不自带主机名，这里额外给一个 ``hint`` 说明怎么拼前缀：调用方
-    （尤其是 AI 客户端）往往只拿得到这个返回值，不应为了找地址去翻配置文件。
+    ``url`` 带预签名参数，有两种形态：
+    - **完整 URL**（``https://host:port/...``）：能确定请求的对外地址时给出，可直接下载
+    - **相对路径**（``/<bucket>/<key>?X-Amz-...``）：拿不到对外地址时给出，
+      需要调用方拼上服务地址
+    两种形态在工具说明里都已写明，调用方看开头是不是 ``http`` 即可判断。
 
-    预签名失败不阻塞状态查询：``url`` 置空并记录 ``url_error``，
-    避免调用方把“引用存在但不可下载”误当成内联结果。
+    预签名失败**直接抛异常**，不在这里吞掉：它只会在对象存储不可用/凭据错这类
+    服务端故障下发生。由调用方（``describe_success``）转成 text 形态返回，
+    既保住“任务本身已成功”的事实，又能让调用方知道“稍后重试可能就好了”——
+    比造一个 ``url: null`` + ``url_error`` 的“成功但下不了”状态清晰得多。
     """
-    response = {
-        "uri": payload.get("uri"),
+    expires = get_presign_expires()
+    signed_url = get_s3_client().presigned_get_object(
+        get_bucket(), payload["key"], expires=timedelta(seconds=expires)
+    )
+    parsed = urlparse(signed_url)
+    url = f"{parsed.path}?{parsed.query}"
+
+    # 有请求上下文时给出可直接访问的完整地址；没有则退回相对路径。
+    # 注意：预签名本身是按内部 endpoint 算的，下载时代理会把 Host 改回内部地址，
+    # 所以这里换成对外的 scheme://host 不影响验签。
+    base_url = get_request_base_url()
+    if base_url:
+        url = f"{base_url.rstrip('/')}{url}"
+
+    return {
         "size_bytes": payload.get("size_bytes"),
         "sha256": payload.get("sha256"),
-        "url": None,
-        "expires_at": None,
-        "url_error": None,
-        "hint": (
-            "url 是相对路径：把它拼在**你配置本服务时用的那个地址**后面即可下载"
-            "（去掉末尾的 /mcp 等路径）。例如服务地址是 https://host:9001/mcp，"
-            "下载地址就是 https://host:9001 + url。请下载后用 jq 等工具按需提取"
-            "字段，不要把整个结果读入上下文；预签名地址有时效，过期后重新调用"
-            "查询接口即可获取新地址。"
+        "url": url,
+        "expires_at": _iso_utc(
+            datetime.now(timezone.utc) + timedelta(seconds=expires)
         ),
     }
-
-    expires = get_presign_expires()
-    try:
-        signed_url = get_s3_client().presigned_get_object(
-            get_bucket(), payload["key"], expires=timedelta(seconds=expires)
-        )
-        parsed = urlparse(signed_url)
-        response["url"] = f"{parsed.path}?{parsed.query}"
-        response["expires_at"] = _iso_utc(
-            datetime.now(timezone.utc) + timedelta(seconds=expires)
-        )
-    except Exception as error:  # noqa: BLE001 - 不阻塞状态查询，但必须明确暴露
-        response["url_error"] = repr(error)
-        print(f"FastTask ---> presign failed for {payload.get('key')!r}: {error!r}")
-
-    return response
 
 
 # --------------------------------------------------------------------------- #

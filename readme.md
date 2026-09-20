@@ -296,21 +296,26 @@ FastTask 内建文件自动过期删除机制，由 Supervisor 管理的独立�
 - **TASK_QUEUE_PORT**：Redis 任务队列端口。`single_node` 和 `distributed_master` 默认为 `6379`
 - **TASK_QUEUE_PASSWD**：Redis 密码。`single_node` 默认为 `passwd`；`distributed_master` 和 `distributed_worker` 为必填
 - **UVICORN_WORKERS**：Uvicorn worker 数量，默认为 2
-- **TLS_CN**：HTTPS 自签证书的 CN（同时写入 SAN），默认为 `localhost`。服务不放在本机、客户端用 IP 或域名访问时**必须设置**，否则 TLS 主机名校验失败（Node 系客户端会报 `self-signed certificate` / `ERR_TLS_CERT_ALTNAME_INVALID`）。
+- **PUBLIC_HOST**：客户端访问本服务的地址（可带端口，如 `192.0.2.10:9014` 或 `fp.example.com`）。默认空。
+  **一处配置同时决定两件事**：自签证书的 CN/SAN，以及外置结果返回的下载地址前缀。
 
   ```yaml
   environment:
-    - TLS_CN=192.0.2.10                      # 客户端用 IP 访问
-    # - TLS_CN=fp.example.com                   # 客户端用域名访问
-    # - TLS_CN=192.0.2.10,fp.example.com      # 多个访问地址：CN 取第一个，SAN 包含全部
+    - PUBLIC_HOST=192.0.2.10:9014      # 客户端用 IP:端口 访问
+    # - PUBLIC_HOST=fp.example.com      # 客户端用域名访问（无端口则用 443）
   ```
 
-  支持逗号分隔的多个值（容忍空格）：**CN 取第一个值，SAN 里包含全部值**，适合同一份部署
-  既用 IP 又用域名访问的场景。此外 SAN 会自动补上 `127.0.0.1`、`localhost`、容器 hostname
-  及其 IPv4 地址，所以容器内自检和同一容器网络内直连无需额外配置。
+  服务不放在本机、客户端用 IP 或域名访问时**必须设置**，否则：
+  - 证书 CN 会是 `localhost` → TLS 主机名校验失败（Node 系客户端报
+    `self-signed certificate` / `ERR_TLS_CERT_ALTNAME_INVALID`）
+  - 外置结果的下载地址会退化成相对路径，需要调用方自己拼前缀
 
-  证书在首次启动时生成到 `files/fasttask/ssl_cert/`，并把当时的 `TLS_CN` 记录在同目录的
-  `cert.cn`；**改了 `TLS_CN`（含增删某个值）会自动重新生成证书**（客户端需重新信任新证书）。
+  端口会被**自动剥离**再写进 CN/SAN（证书不能带端口），但会保留在下载地址里。
+  SAN 除 `PUBLIC_HOST` 外还会自动补上 `127.0.0.1`、`localhost`、容器 hostname 及其 IPv4，
+  所以容器内自检和同一容器网络内直连无需额外配置。
+
+  证书在首次启动时生成到 `files/fasttask/ssl_cert/`，并把当时的 `PUBLIC_HOST` 记录在
+  同目录的 `cert.cn`；**改了 `PUBLIC_HOST` 会自动重新生成证书**（客户端需重新信任）。
 
   注意：证书始终是自签的，客户端需要信任它（如 Node 系客户端设置 `NODE_EXTRA_CA_CERTS`
   指向 `files/fasttask/ssl_cert/cert.pem`）。
@@ -367,17 +372,30 @@ environment:
 
 ### 结果下载地址
 
-外置结果的 `result.url` 是**相对路径**（形如 `/fasttask-results/20260918/xxx.json?X-Amz-...`）：
-服务端不需要知道自己的对外地址，由调用方拼上服务地址即可：
+外置结果的 `result.url` 就是一个**可直接下载的带签名地址**，有两种形态：
+
+```
+配了 PUBLIC_HOST（推荐）：
+  https://192.0.2.10:9014/fasttask-results/20260918/xxx.json?X-Amz-...
+未配 PUBLIC_HOST：
+  /fasttask-results/20260918/xxx.json?X-Amz-...
+```
+
+即：服务端能确定自己的对外地址时直接给出完整 URL（AI/客户端拿到就能下），
+拿不到时退回相对路径。两种形态都带预签名参数，下载方式一样：
 
 ```bash
-curl -s -o result.json "https://<fasttask 地址><result.url>"
+curl -s -o result.json "<url 原样使用；若以 / 开头则前面拼服务地址>"
 jq . result.json
 ```
 
-- 客户端（`fasttask_manager >= 0.6.0`）会自动拼接并下载，调用方拿到的始终是真实结果
-- AI 客户端（MCP）的工具说明里给出了同样的拼接方式
+url 之外的三个字段：`size_bytes`（体量）、`sha256`（校验完整性）、
+`expires_at`（签名过期时间）。
+
+- 客户端（`fasttask_manager >= 0.6.0`）会自动处理两种情况，调用方拿到的始终是真实结果
 - 下载地址有时效，过期后重新 `check` 一次即可获得新地址
+- 预签名失败（对象存储不可用/凭据错）时**整个响应降级为 `text`** 并带上原始报错，
+  不会返回一个“成功但下不了”的半成品引用；这种情况稍后重试即可
 
 ### 升级顺序（结果外置是破坏性变更）
 
@@ -458,7 +476,7 @@ MCP 里只有两个放描述的位置，FastTask 对应地拆成两层：
 
 - 客户端访问 `/mcp` 时会经历一次 307 跳转（`/mcp` → `/mcp/`），官方 MCP 客户端会自动跟随
 - 容器使用自签证书时，客户端需要信任该证书（如 Node 系客户端设置 `NODE_EXTRA_CA_CERTS`）。
-  若客户端用 IP 或域名访问，还需把 `TLS_CN` 设成该地址，否则会因证书 CN/SAN 不匹配而失败
+  若客户端用 IP 或域名访问，还需把 `PUBLIC_HOST` 设成该地址，否则会因证书 CN/SAN 不匹配而失败
 - MCP 传输为无状态模式：任务状态由 `result_id` 定位，服务重启后依然可用
 - 工具数量随任务数增长（每个任务最多 3 个），可用 `ENABLED_TASKS` 控制暴露范围
 

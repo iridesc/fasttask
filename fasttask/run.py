@@ -62,11 +62,29 @@ def init_dir(dir_path):
         print(f"{log_prefix} folder created. '{dir_path}'")
 
 
-def ssl_san_entries(tls_cn_values):
-    """把 TLS_CN 的多值解析成 SAN 条目，并补上本机可达地址。
+def split_host_port(public_host):
+    """把 ``host[:port]`` 拆成纯主机部分（剥掉端口）。
 
-    现代 TLS 客户端（含浏览器、Node、Go）只校验 SAN，不看 CN，
-    所以客户端会用到的每个地址都必须出现在 SAN 里。
+    证书的 CN/SAN 不能带端口，而下载地址前缀需要保留端口，所以两处取值不同。
+    不用 urlparse：``10.0.0.1:9014`` 会被它当成 scheme。
+    """
+    value = (public_host or "").strip()
+    if not value:
+        return ""
+    # 形如 [::1]:9014 时剥离 IPv6 字面量外的端口
+    if value.startswith("["):
+        return value.split("]", 1)[0].lstrip("[")
+    if ":" in value:
+        return value.rsplit(":", 1)[0]
+    return value
+
+
+def ssl_san_entries(public_host):
+    """生成证书的 SAN 条目：PUBLIC_HOST 本身 + 本机可达地址。
+
+    现代 TLS 客户端（含浏览器、Node、Go）只校验 SAN、不看 CN，所以客户端会用到的
+    每个地址都必须出现在 SAN 里。除 PUBLIC_HOST 外再补上本机地址，保证容器内自检、
+    同容器网络内直连也能通过校验。
     """
     entries = []
 
@@ -74,18 +92,15 @@ def ssl_san_entries(tls_cn_values):
         if entry not in entries:
             entries.append(entry)
 
-    def to_entry(value):
+    host = split_host_port(public_host)
+    if host:
         try:
-            ipaddress.ip_address(value)
-            return f"IP:{value}"
+            ipaddress.ip_address(host)
+            add(f"IP:{host}")
         except ValueError:
-            return f"DNS:{value}"
+            add(f"DNS:{host}")
 
-    for value in tls_cn_values:
-        add(to_entry(value))
-
-    # 本机访问能力：容器内健康检查、同机 curl、同一容器网络内用容器 IP 直连。
-    # 只取 IPv4，IPv6 在 SAN 里的写法容易踩坑且内网场景基本用不到。
+    # 只取 IPv4：IPv6 在 SAN 里的写法容易踩坑，内网场景基本用不到。
     add("IP:127.0.0.1")
     add("DNS:localhost")
     hostname = socket.gethostname()
@@ -104,14 +119,13 @@ def generate_ssl_certs():
     ssl_certfile = os.environ["SSL_CERTFILE"]
     cn_marker = os.path.join(os.environ["SSL_CERT_DIR"], "cert.cn")
 
-    # TLS_CN 支持逗号分隔的多值：CN 取第一个，SAN 包含全部。
-    # 默认 localhost（与历史行为一致）。
-    raw_cn = os.environ.get("TLS_CN", "").strip()
-    tls_cn_values = [v.strip() for v in raw_cn.split(",") if v.strip()]
-    primary_cn = tls_cn_values[0] if tls_cn_values else "localhost"
-    marker_value = ",".join(tls_cn_values) or "localhost"
+    # PUBLIC_HOST（客户端访问本服务的地址，可带端口）一处决定两件事：证书的 CN/SAN
+    # 与外置结果的下载地址前缀。未设置时回落 localhost（与历史行为一致）。
+    public_host = os.environ.get("PUBLIC_HOST", "").strip()
+    primary_cn = split_host_port(public_host) or "localhost"
+    marker_value = public_host or "localhost"
 
-    # 证书已存在且 CN 未变时复用，避免每次重启都重新生成（客户端需重新信任）。
+    # 证书已存在且地址未变时复用，避免每次重启都重新生成（客户端需重新信任）。
     if os.path.isfile(ssl_keyfile) and os.path.isfile(ssl_certfile):
         try:
             with open(cn_marker, encoding="utf-8") as f:
@@ -120,9 +134,9 @@ def generate_ssl_certs():
             existing_cn = ""
         if existing_cn == marker_value:
             return
-        # 旧证书是其他 CN 生成的（或有历史遗留），重建
+        # 旧证书是按另一个地址生成的（或有历史遗留），重建
         print(
-            f"{log_prefix} TLS_CN changed ('{existing_cn or 'unknown'}' -> "
+            f"{log_prefix} PUBLIC_HOST changed ('{existing_cn or 'unknown'}' -> "
             f"'{marker_value}'), regenerating SSL certificates"
         )
         for stale in (ssl_keyfile, ssl_certfile):
@@ -131,7 +145,7 @@ def generate_ssl_certs():
             except OSError:
                 pass
 
-    san_entries = ssl_san_entries(tls_cn_values)
+    san_entries = ssl_san_entries(public_host)
 
     subprocess.run(
         [
@@ -282,9 +296,11 @@ env_type_to_envs = {
             force_default=True,
             is_print_env=False,
         ),
-        # 自签证书的 CN/SAN。客户端用 IP 或域名访问时把它设成该地址，
-        # 否则默认 CN=localhost 会导致任何非本机访问都报主机名不匹配。
-        Env("TLS_CN", "localhost"),
+        # 客户端访问本服务的地址（可带端口，如 10.24.103.95:9014 或 fp.example.com）。
+        # 一处配置同时决定两件事：自签证书的 CN/SAN，以及外置结果返回的下载地址前缀。
+        # 默认空 = 证书用 localhost、下载地址按请求头推导（与历史行为一致）。
+        # 部署在以 IP/域名访问的环境下应当显式设置，否则证书主机名校验会失败。
+        Env("PUBLIC_HOST", default_value="", optional=True),
         Env(
             "SSL_CERTFILE",
             "/fasttask/files/fasttask/ssl_cert/cert.pem",

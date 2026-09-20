@@ -53,9 +53,22 @@ def describe_success(raw_result, result_model=None):
     """把成功结果翻译成 ``(result_type, payload)``。
 
     结果已外置到对象存储时只返回引用（含预签名下载地址），不回传内容。
+
+    预签名失败（对象存储不可用、凭据错等）降级成 text 形态返回，**不谎报任务失败**：
+    任务本身确实已经成功、结果也已写入对象存储，只是这次拿不到下载地址。
+    文案里保留原始报错便于定位，并提示可重试（对象存储恢复后重调查询接口即可）。
     """
     if detect_stored_result_type(raw_result) is ResultType.s3:
-        return ResultType.s3.value, build_s3_result_response(raw_result)
+        try:
+            return ResultType.s3.value, build_s3_result_response(raw_result)
+        except Exception:  # noqa: BLE001 - 服务端故障，但任务已成功，不能报 FAILURE
+            print(f"FastTask ---> presign failed: {traceback.format_exc()}")
+            return (
+                ResultType.text.value,
+                "任务已成功执行，但生成下载地址失败（对象存储暂不可用）。"
+                "请稍后重新调用本接口获取新的下载地址；原始报错：\n"
+                f"{traceback.format_exc()}",
+            )
 
     value = raw_result
     if result_model is not None:
