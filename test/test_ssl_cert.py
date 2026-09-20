@@ -1,4 +1,4 @@
-"""自签证书生成测试：TLS_CN 决定 CN/SAN，改了要能重新生成。
+"""自签证书生成测试：TLS_CN（含多值）决定 CN/SAN，改了要能重新生成。
 
 不依赖运行中的服务，直接调用 run.generate_ssl_certs()。
 """
@@ -6,6 +6,7 @@
 import importlib.util
 import os
 import re
+import socket
 import subprocess
 import sys
 import tempfile
@@ -14,7 +15,7 @@ from pathlib import Path
 FASTTASK_DIR = Path(__file__).resolve().parent.parent / "fasttask"
 
 
-def load_generate_ssl_certs():
+def load_run_module():
     # run.py 内部导入 utils.*，需要把 fasttask/ 放进 sys.path
     if str(FASTTASK_DIR) not in sys.path:
         sys.path.insert(0, str(FASTTASK_DIR))
@@ -23,7 +24,7 @@ def load_generate_ssl_certs():
     )
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
-    return module.generate_ssl_certs
+    return module
 
 
 def cert_info(certfile):
@@ -59,56 +60,98 @@ def run_case(generate, tls_cn, workdir):
     return cert_info(os.environ["SSL_CERTFILE"])
 
 
+def verify(certfile, hostname, is_ip=False):
+    flag = "-verify_ip" if is_ip else "-verify_hostname"
+    result = subprocess.run(
+        ["openssl", "verify", flag, hostname, "-CAfile", certfile, certfile],
+        capture_output=True, text=True,
+    )
+    return result.returncode == 0
+
+
 def main():
     print("=" * 68)
     print("自签证书生成测试（TLS_CN）")
     print("=" * 68)
-    generate = load_generate_ssl_certs()
+    run_module = load_run_module()
+    generate = run_module.generate_ssl_certs
+    hostname = socket.gethostname()
     failures = []
 
     def check(label, actual, expected):
         ok = actual == expected
         print(f"{'✅' if ok else '❌'} {label}")
-        print(f"     实际: {actual}")
         if not ok:
+            print(f"     实际: {actual}")
             print(f"     期望: {expected}")
+            failures.append(label)
+
+    def check_in(label, needle, haystack):
+        ok = needle in haystack
+        print(f"{'✅' if ok else '❌'} {label}")
+        if not ok:
+            print(f"     SAN 中缺少: {needle}")
+            print(f"     实际 SAN: {haystack}")
             failures.append(label)
 
     # 1. 不设 TLS_CN -> 保持历史行为
     d = tempfile.mkdtemp()
     subject, san = run_case(generate, None, d)
-    check("默认（未设置 TLS_CN）CN", subject, "CN=localhost")
-    check("默认 SAN 含 localhost 与 127.0.0.1",
-          sorted(san), sorted(["localhost", "127.0.0.1"]))
+    check("默认（未设置 TLS_CN）CN = localhost", subject, "CN=localhost")
+    check_in("默认 SAN 含 127.0.0.1", "127.0.0.1", san)
+    check_in("默认 SAN 含 localhost", "localhost", san)
+    check_in("默认 SAN 含容器 hostname（自动补充）", hostname, san)
 
-    # 2. TLS_CN 为 IP
+    # 2. TLS_CN 为单个 IP
     d = tempfile.mkdtemp()
-    subject, san = run_case(generate, "10.24.103.95", d)
-    check("TLS_CN=IP 时 CN", subject, "CN=10.24.103.95")
-    check("TLS_CN=IP 时 SAN（含该 IP + 本机回环）",
-          sorted(san), sorted(["10.24.103.95", "127.0.0.1", "localhost"]))
+    subject, san = run_case(generate, "192.0.2.10", d)
+    check("TLS_CN=单个 IP 时 CN", subject, "CN=192.0.2.10")
+    check_in("SAN 含该 IP", "192.0.2.10", san)
+    check("证书对该 IP 校验通过", verify(os.environ["SSL_CERTFILE"], "192.0.2.10", is_ip=True), True)
 
-    # 3. TLS_CN 为域名
+    # 3. TLS_CN 为单个域名
     d = tempfile.mkdtemp()
     subject, san = run_case(generate, "fasttask.example.com", d)
     check("TLS_CN=域名 时 CN", subject, "CN=fasttask.example.com")
-    check("TLS_CN=域名 时 SAN（含该域名 + 本机回环）",
-          sorted(san), sorted(["fasttask.example.com", "127.0.0.1", "localhost"]))
+    check_in("SAN 含该域名", "fasttask.example.com", san)
+    check("证书对该域名校验通过", verify(os.environ["SSL_CERTFILE"], "fasttask.example.com"), True)
 
-    # 4. 改了 TLS_CN 要重新生成（否则旧证书会一直生效）
+    # 4. TLS_CN 多值：CN 取第一个，SAN 含全部
     d = tempfile.mkdtemp()
-    run_case(generate, "10.24.103.95", d)
-    subject, san = run_case(generate, "10.24.103.99", d)
-    check("TLS_CN 变更后 CN 更新", subject, "CN=10.24.103.99")
+    subject, san = run_case(generate, "192.0.2.10,fasttask.example.com,198.51.100.20", d)
+    check("多值时 CN 取第一个", subject, "CN=192.0.2.10")
+    check_in("SAN 含第一个（IP）", "192.0.2.10", san)
+    check_in("SAN 含第二个（域名）", "fasttask.example.com", san)
+    check_in("SAN 含第三个（另一个 IP）", "198.51.100.20", san)
+    check("多值下第一个 IP 校验通过", verify(os.environ["SSL_CERTFILE"], "192.0.2.10", is_ip=True), True)
+    check("多值下域名校验通过", verify(os.environ["SSL_CERTFILE"], "fasttask.example.com"), True)
+    check("多值下第三个 IP 校验通过", verify(os.environ["SSL_CERTFILE"], "198.51.100.20", is_ip=True), True)
 
-    # 5. CN 未变时应复用（不重新生成），通过 mtime 判断
+    # 5. 多值里的空白要容忍
     d = tempfile.mkdtemp()
-    run_case(generate, "10.24.103.95", d)
+    subject, san = run_case(generate, " 192.0.2.10 , fasttask.example.com ", d)
+    check("多值含空格时 CN 去空白", subject, "CN=192.0.2.10")
+    check_in("多值含空格时 SAN 仍正确", "fasttask.example.com", san)
+
+    # 6. 改了 TLS_CN 要重新生成（否则旧证书一直生效）
+    d = tempfile.mkdtemp()
+    run_case(generate, "192.0.2.10", d)
+    subject, _ = run_case(generate, "192.0.2.11", d)
+    check("TLS_CN 变更后 CN 更新", subject, "CN=192.0.2.11")
+
+    # 7. 多值增删也要触发重建
+    d = tempfile.mkdtemp()
+    run_case(generate, "192.0.2.10", d)
+    _, san = run_case(generate, "192.0.2.10,fasttask.example.com", d)
+    check_in("TLS_CN 追加值后 SAN 更新", "fasttask.example.com", san)
+
+    # 8. CN 未变时应复用（不重新生成），通过 mtime 判断
+    d = tempfile.mkdtemp()
+    run_case(generate, "192.0.2.10", d)
     mtime_before = os.path.getmtime(os.environ["SSL_CERTFILE"])
-    run_case(generate, "10.24.103.95", d)
+    run_case(generate, "192.0.2.10", d)
     mtime_after = os.path.getmtime(os.environ["SSL_CERTFILE"])
-    check("TLS_CN 未变时复用证书（不重新生成）",
-          mtime_before == mtime_after, True)
+    check("TLS_CN 未变时复用证书（不重新生成）", mtime_before == mtime_after, True)
 
     print("=" * 68)
     if failures:

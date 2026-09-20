@@ -300,13 +300,17 @@ FastTask 内建文件自动过期删除机制，由 Supervisor 管理的独立�
 
   ```yaml
   environment:
-    - TLS_CN=10.24.103.95          # 客户端用 IP 访问
-    # - TLS_CN=fp.example.com      # 客户端用域名访问
+    - TLS_CN=192.0.2.10                      # 客户端用 IP 访问
+    # - TLS_CN=fp.example.com                   # 客户端用域名访问
+    # - TLS_CN=192.0.2.10,fp.example.com      # 多个访问地址：CN 取第一个，SAN 包含全部
   ```
 
-  证书在首次启动时生成到 `files/fasttask/ssl_cert/`，并把当时的 CN 记录在同目录的 `cert.cn`；
-  **改了 `TLS_CN` 会自动重新生成证书**（客户端需重新信任新证书）。SAN 里始终保留
-  `127.0.0.1` 与 `localhost`，所以容器内的健康检查、同机 curl 不受影响。
+  支持逗号分隔的多个值（容忍空格）：**CN 取第一个值，SAN 里包含全部值**，适合同一份部署
+  既用 IP 又用域名访问的场景。此外 SAN 会自动补上 `127.0.0.1`、`localhost`、容器 hostname
+  及其 IPv4 地址，所以容器内自检和同一容器网络内直连无需额外配置。
+
+  证书在首次启动时生成到 `files/fasttask/ssl_cert/`，并把当时的 `TLS_CN` 记录在同目录的
+  `cert.cn`；**改了 `TLS_CN`（含增删某个值）会自动重新生成证书**（客户端需重新信任新证书）。
 
   注意：证书始终是自签的，客户端需要信任它（如 Node 系客户端设置 `NODE_EXTRA_CA_CERTS`
   指向 `files/fasttask/ssl_cert/cert.pem`）。

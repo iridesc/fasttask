@@ -2,6 +2,7 @@
 import ipaddress
 import os
 import shutil
+import socket
 import subprocess
 
 from utils.result_storage import VALID_RESULT_TYPES
@@ -61,13 +62,54 @@ def init_dir(dir_path):
         print(f"{log_prefix} folder created. '{dir_path}'")
 
 
+def ssl_san_entries(tls_cn_values):
+    """把 TLS_CN 的多值解析成 SAN 条目，并补上本机可达地址。
+
+    现代 TLS 客户端（含浏览器、Node、Go）只校验 SAN，不看 CN，
+    所以客户端会用到的每个地址都必须出现在 SAN 里。
+    """
+    entries = []
+
+    def add(entry):
+        if entry not in entries:
+            entries.append(entry)
+
+    def to_entry(value):
+        try:
+            ipaddress.ip_address(value)
+            return f"IP:{value}"
+        except ValueError:
+            return f"DNS:{value}"
+
+    for value in tls_cn_values:
+        add(to_entry(value))
+
+    # 本机访问能力：容器内健康检查、同机 curl、同一容器网络内用容器 IP 直连。
+    # 只取 IPv4，IPv6 在 SAN 里的写法容易踩坑且内网场景基本用不到。
+    add("IP:127.0.0.1")
+    add("DNS:localhost")
+    hostname = socket.gethostname()
+    if hostname:
+        add(f"DNS:{hostname}")
+        try:
+            for info in socket.getaddrinfo(hostname, None, socket.AF_INET):
+                add(f"IP:{info[4][0]}")
+        except OSError:
+            pass
+    return entries
+
+
 def generate_ssl_certs():
     ssl_keyfile = os.environ["SSL_KEYFILE"]
     ssl_certfile = os.environ["SSL_CERTFILE"]
     cn_marker = os.path.join(os.environ["SSL_CERT_DIR"], "cert.cn")
 
-    # TLS_CN 决定证书的 CN/SAN。默认 localhost（与历史行为一致）。
-    tls_cn = os.environ.get("TLS_CN", "").strip() or "localhost"
+    # TLS_CN 支持逗号分隔的多值：CN 取第一个，SAN 包含全部。
+    # 默认 localhost（与历史行为一致）。
+    raw_cn = os.environ.get("TLS_CN", "").strip()
+    tls_cn_values = [v.strip() for v in raw_cn.split(",") if v.strip()]
+    primary_cn = tls_cn_values[0] if tls_cn_values else "localhost"
+    marker_value = ",".join(tls_cn_values) or "localhost"
 
     # 证书已存在且 CN 未变时复用，避免每次重启都重新生成（客户端需重新信任）。
     if os.path.isfile(ssl_keyfile) and os.path.isfile(ssl_certfile):
@@ -76,12 +118,12 @@ def generate_ssl_certs():
                 existing_cn = f.read().strip()
         except OSError:
             existing_cn = ""
-        if existing_cn == tls_cn:
+        if existing_cn == marker_value:
             return
         # 旧证书是其他 CN 生成的（或有历史遗留），重建
         print(
             f"{log_prefix} TLS_CN changed ('{existing_cn or 'unknown'}' -> "
-            f"'{tls_cn}'), regenerating SSL certificates"
+            f"'{marker_value}'), regenerating SSL certificates"
         )
         for stale in (ssl_keyfile, ssl_certfile):
             try:
@@ -89,16 +131,7 @@ def generate_ssl_certs():
             except OSError:
                 pass
 
-    # 现代 TLS 客户端只校验 SAN、不再看 CN，所以 CN 与 SAN 都要按 TLS_CN 生成。
-    try:
-        ipaddress.ip_address(tls_cn)
-        san_entries = [f"IP:{tls_cn}"]
-    except ValueError:
-        san_entries = [f"DNS:{tls_cn}"]
-    # 保留本机访问能力（容器内健康检查、同机 curl 等）
-    for extra in ("IP:127.0.0.1", "DNS:localhost"):
-        if extra.split(":", 1)[1] != tls_cn:
-            san_entries.append(extra)
+    san_entries = ssl_san_entries(tls_cn_values)
 
     subprocess.run(
         [
@@ -115,17 +148,17 @@ def generate_ssl_certs():
             "-days",
             "365",
             "-subj",
-            f"/CN={tls_cn}",
+            f"/CN={primary_cn}",
             "-addext",
             f"subjectAltName={','.join(san_entries)}",
         ],
         check=True,
     )
     with open(cn_marker, "w", encoding="utf-8") as f:
-        f.write(tls_cn)
+        f.write(marker_value)
     print(
         f"{log_prefix} SSL certificates generated in {os.environ['SSL_CERT_DIR']} "
-        f"(CN={tls_cn}, SAN={','.join(san_entries)})"
+        f"(CN={primary_cn}, SAN={','.join(san_entries)})"
     )
 
 
