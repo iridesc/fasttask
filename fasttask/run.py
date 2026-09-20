@@ -62,13 +62,13 @@ def init_dir(dir_path):
         print(f"{log_prefix} folder created. '{dir_path}'")
 
 
-def split_host_port(public_host):
+def split_host_port(public_endpoint):
     """把 ``host[:port]`` 拆成纯主机部分（剥掉端口）。
 
     证书的 CN/SAN 不能带端口，而下载地址前缀需要保留端口，所以两处取值不同。
     不用 urlparse：``10.0.0.1:9014`` 会被它当成 scheme。
     """
-    value = (public_host or "").strip()
+    value = (public_endpoint or "").strip()
     if not value:
         return ""
     # 形如 [::1]:9014 时剥离 IPv6 字面量外的端口
@@ -79,11 +79,11 @@ def split_host_port(public_host):
     return value
 
 
-def ssl_san_entries(public_host):
-    """生成证书的 SAN 条目：PUBLIC_HOST 本身 + 本机可达地址。
+def ssl_san_entries(public_endpoint):
+    """生成证书的 SAN 条目：PUBLIC_ENDPOINT 本身 + 本机可达地址。
 
     现代 TLS 客户端（含浏览器、Node、Go）只校验 SAN、不看 CN，所以客户端会用到的
-    每个地址都必须出现在 SAN 里。除 PUBLIC_HOST 外再补上本机地址，保证容器内自检、
+    每个地址都必须出现在 SAN 里。除 PUBLIC_ENDPOINT 外再补上本机地址，保证容器内自检、
     同容器网络内直连也能通过校验。
     """
     entries = []
@@ -92,7 +92,7 @@ def ssl_san_entries(public_host):
         if entry not in entries:
             entries.append(entry)
 
-    host = split_host_port(public_host)
+    host = split_host_port(public_endpoint)
     if host:
         try:
             ipaddress.ip_address(host)
@@ -119,11 +119,12 @@ def generate_ssl_certs():
     ssl_certfile = os.environ["SSL_CERTFILE"]
     cn_marker = os.path.join(os.environ["SSL_CERT_DIR"], "cert.cn")
 
-    # PUBLIC_HOST（客户端访问本服务的地址，可带端口）一处决定两件事：证书的 CN/SAN
+    # PUBLIC_ENDPOINT（客户端访问本服务的 host[:port]，与 S3_ENDPOINT 同一套写法）
+    # 一处决定两件事：证书的 CN/SAN
     # 与外置结果的下载地址前缀。未设置时回落 localhost（与历史行为一致）。
-    public_host = os.environ.get("PUBLIC_HOST", "").strip()
-    primary_cn = split_host_port(public_host) or "localhost"
-    marker_value = public_host or "localhost"
+    public_endpoint = os.environ.get("PUBLIC_ENDPOINT", "").strip()
+    primary_cn = split_host_port(public_endpoint) or "localhost"
+    marker_value = public_endpoint or "localhost"
 
     # 证书已存在且地址未变时复用，避免每次重启都重新生成（客户端需重新信任）。
     if os.path.isfile(ssl_keyfile) and os.path.isfile(ssl_certfile):
@@ -136,7 +137,7 @@ def generate_ssl_certs():
             return
         # 旧证书是按另一个地址生成的（或有历史遗留），重建
         print(
-            f"{log_prefix} PUBLIC_HOST changed ('{existing_cn or 'unknown'}' -> "
+            f"{log_prefix} PUBLIC_ENDPOINT changed ('{existing_cn or 'unknown'}' -> "
             f"'{marker_value}'), regenerating SSL certificates"
         )
         for stale in (ssl_keyfile, ssl_certfile):
@@ -145,7 +146,7 @@ def generate_ssl_certs():
             except OSError:
                 pass
 
-    san_entries = ssl_san_entries(public_host)
+    san_entries = ssl_san_entries(public_endpoint)
 
     subprocess.run(
         [
@@ -300,7 +301,7 @@ env_type_to_envs = {
         # 一处配置同时决定两件事：自签证书的 CN/SAN，以及外置结果返回的下载地址前缀。
         # 默认空 = 证书用 localhost、下载地址按请求头推导（与历史行为一致）。
         # 部署在以 IP/域名访问的环境下应当显式设置，否则证书主机名校验会失败。
-        Env("PUBLIC_HOST", default_value="", optional=True),
+        Env("PUBLIC_ENDPOINT", default_value="", optional=True),
         Env(
             "SSL_CERTFILE",
             "/fasttask/files/fasttask/ssl_cert/cert.pem",

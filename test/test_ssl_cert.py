@@ -1,4 +1,4 @@
-"""自签证书生成测试：PUBLIC_HOST 决定证书的 CN/SAN，改了要能重新生成。
+"""自签证书生成测试：PUBLIC_ENDPOINT 决定证书的 CN/SAN，改了要能重新生成。
 
 不依赖运行中的服务，直接调用 run.generate_ssl_certs()。
 """
@@ -53,9 +53,9 @@ def run_case(generate, public_host, workdir):
     os.environ["SSL_KEYFILE"] = str(Path(workdir) / "key.pem")
     os.environ["SSL_CERTFILE"] = str(Path(workdir) / "cert.pem")
     if public_host is None:
-        os.environ.pop("PUBLIC_HOST", None)
+        os.environ.pop("PUBLIC_ENDPOINT", None)
     else:
-        os.environ["PUBLIC_HOST"] = public_host
+        os.environ["PUBLIC_ENDPOINT"] = public_host
     generate()
     return cert_info(os.environ["SSL_CERTFILE"])
 
@@ -71,7 +71,7 @@ def verify(certfile, hostname, is_ip=False):
 
 def main():
     print("=" * 68)
-    print("自签证书生成测试（PUBLIC_HOST）")
+    print("自签证书生成测试（PUBLIC_ENDPOINT）")
     print("=" * 68)
     run_module = load_run_module()
     generate = run_module.generate_ssl_certs
@@ -94,18 +94,18 @@ def main():
             print(f"     实际 SAN: {haystack}")
             failures.append(label)
 
-    # 1. 不设 PUBLIC_HOST -> 保持历史行为
+    # 1. 不设 PUBLIC_ENDPOINT -> 保持历史行为
     d = tempfile.mkdtemp()
     subject, san = run_case(generate, None, d)
-    check("默认（未设置 PUBLIC_HOST）CN = localhost", subject, "CN=localhost")
+    check("默认（未设置 PUBLIC_ENDPOINT）CN = localhost", subject, "CN=localhost")
     check_in("默认 SAN 含 127.0.0.1", "127.0.0.1", san)
     check_in("默认 SAN 含 localhost", "localhost", san)
     check_in("默认 SAN 含容器 hostname（自动补充）", hostname, san)
 
-    # 2. PUBLIC_HOST 带端口的 IP：CN 必须剥掉端口
+    # 2. PUBLIC_ENDPOINT 带端口的 IP：CN 必须剥掉端口
     d = tempfile.mkdtemp()
     subject, san = run_case(generate, "192.0.2.10:9014", d)
-    check("PUBLIC_HOST=IP:端口 时 CN 剥掉端口", subject, "CN=192.0.2.10")
+    check("PUBLIC_ENDPOINT=IP:端口 时 CN 剥掉端口", subject, "CN=192.0.2.10")
     check_in("SAN 含该 IP（不带端口）", "192.0.2.10", san)
     check(
         "证书对该 IP 校验通过",
@@ -114,20 +114,20 @@ def main():
     )
     check("SAN 中不含端口", "9014" not in ",".join(san), True)
 
-    # 3. PUBLIC_HOST 不带端口的 IP
+    # 3. PUBLIC_ENDPOINT 不带端口的 IP
     d = tempfile.mkdtemp()
     subject, san = run_case(generate, "192.0.2.11", d)
-    check("PUBLIC_HOST=IP 时 CN", subject, "CN=192.0.2.11")
+    check("PUBLIC_ENDPOINT=IP 时 CN", subject, "CN=192.0.2.11")
     check(
         "证书对该 IP 校验通过",
         verify(os.environ["SSL_CERTFILE"], "192.0.2.11", is_ip=True),
         True,
     )
 
-    # 4. PUBLIC_HOST 为域名（带端口）
+    # 4. PUBLIC_ENDPOINT 为域名（带端口）
     d = tempfile.mkdtemp()
     subject, san = run_case(generate, "fp.example.com:8443", d)
-    check("PUBLIC_HOST=域名:端口 时 CN 剥掉端口", subject, "CN=fp.example.com")
+    check("PUBLIC_ENDPOINT=域名:端口 时 CN 剥掉端口", subject, "CN=fp.example.com")
     check_in("SAN 含该域名", "fp.example.com", san)
     check(
         "证书对该域名校验通过",
@@ -135,11 +135,11 @@ def main():
         True,
     )
 
-    # 5. 改了 PUBLIC_HOST 要重新生成（否则旧证书一直生效）
+    # 5. 改了 PUBLIC_ENDPOINT 要重新生成（否则旧证书一直生效）
     d = tempfile.mkdtemp()
     run_case(generate, "192.0.2.10:9014", d)
     subject, _ = run_case(generate, "192.0.2.12:9014", d)
-    check("PUBLIC_HOST 变更后 CN 更新", subject, "CN=192.0.2.12")
+    check("PUBLIC_ENDPOINT 变更后 CN 更新", subject, "CN=192.0.2.12")
 
     # 6. 只改端口也要重建（证书虽然同 CN，但 cert.cn 记录的完整值变了）
     d = tempfile.mkdtemp()
@@ -147,7 +147,7 @@ def main():
     mtime_before = os.path.getmtime(os.environ["SSL_CERTFILE"])
     run_case(generate, "192.0.2.10:9999", d)
     mtime_after = os.path.getmtime(os.environ["SSL_CERTFILE"])
-    check("仅端口变化时也重建（保证与 PUBLIC_HOST 记录一致）", mtime_before != mtime_after, True)
+    check("仅端口变化时也重建（保证与 PUBLIC_ENDPOINT 记录一致）", mtime_before != mtime_after, True)
 
     # 7. 值未变时复用（不重新生成），通过 mtime 判断
     d = tempfile.mkdtemp()
@@ -155,7 +155,7 @@ def main():
     mtime_before = os.path.getmtime(os.environ["SSL_CERTFILE"])
     run_case(generate, "192.0.2.10:9014", d)
     mtime_after = os.path.getmtime(os.environ["SSL_CERTFILE"])
-    check("PUBLIC_HOST 未变时复用证书（不重新生成）", mtime_before == mtime_after, True)
+    check("PUBLIC_ENDPOINT 未变时复用证书（不重新生成）", mtime_before == mtime_after, True)
 
     # 8. split_host_port 的单元行为
     split = run_module.split_host_port

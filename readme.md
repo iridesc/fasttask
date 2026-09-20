@@ -296,13 +296,13 @@ FastTask 内建文件自动过期删除机制，由 Supervisor 管理的独立�
 - **TASK_QUEUE_PORT**：Redis 任务队列端口。`single_node` 和 `distributed_master` 默认为 `6379`
 - **TASK_QUEUE_PASSWD**：Redis 密码。`single_node` 默认为 `passwd`；`distributed_master` 和 `distributed_worker` 为必填
 - **UVICORN_WORKERS**：Uvicorn worker 数量，默认为 2
-- **PUBLIC_HOST**：客户端访问本服务的地址（可带端口，如 `192.0.2.10:9014` 或 `fp.example.com`）。默认空。
+- **PUBLIC_ENDPOINT**：客户端访问本服务的地址（可带端口，如 `192.0.2.10:9014` 或 `fp.example.com`）。默认空。
   **一处配置同时决定两件事**：自签证书的 CN/SAN，以及外置结果返回的下载地址前缀。
 
   ```yaml
   environment:
-    - PUBLIC_HOST=192.0.2.10:9014      # 客户端用 IP:端口 访问
-    # - PUBLIC_HOST=fp.example.com      # 客户端用域名访问（无端口则用 443）
+    - PUBLIC_ENDPOINT=192.0.2.10:9014      # 客户端用 IP:端口 访问
+    # - PUBLIC_ENDPOINT=fp.example.com      # 客户端用域名访问（无端口则用 443）
   ```
 
   服务不放在本机、客户端用 IP 或域名访问时**必须设置**，否则：
@@ -311,11 +311,11 @@ FastTask 内建文件自动过期删除机制，由 Supervisor 管理的独立�
   - 外置结果的下载地址会退化成相对路径，需要调用方自己拼前缀
 
   端口会被**自动剥离**再写进 CN/SAN（证书不能带端口），但会保留在下载地址里。
-  SAN 除 `PUBLIC_HOST` 外还会自动补上 `127.0.0.1`、`localhost`、容器 hostname 及其 IPv4，
+  SAN 除 `PUBLIC_ENDPOINT` 外还会自动补上 `127.0.0.1`、`localhost`、容器 hostname 及其 IPv4，
   所以容器内自检和同一容器网络内直连无需额外配置。
 
-  证书在首次启动时生成到 `files/fasttask/ssl_cert/`，并把当时的 `PUBLIC_HOST` 记录在
-  同目录的 `cert.cn`；**改了 `PUBLIC_HOST` 会自动重新生成证书**（客户端需重新信任）。
+  证书在首次启动时生成到 `files/fasttask/ssl_cert/`，并把当时的 `PUBLIC_ENDPOINT` 记录在
+  同目录的 `cert.cn`；**改了 `PUBLIC_ENDPOINT` 会自动重新生成证书**（客户端需重新信任）。
 
   注意：证书始终是自签的，客户端需要信任它（如 Node 系客户端设置 `NODE_EXTRA_CA_CERTS`
   指向 `files/fasttask/ssl_cert/cert.pem`）。
@@ -375,9 +375,9 @@ environment:
 外置结果的 `result.url` 就是一个**可直接下载的带签名地址**，有两种形态：
 
 ```
-配了 PUBLIC_HOST（推荐）：
+配了 PUBLIC_ENDPOINT（推荐）：
   https://192.0.2.10:9014/fasttask-results/20260918/xxx.json?X-Amz-...
-未配 PUBLIC_HOST：
+未配 PUBLIC_ENDPOINT：
   /fasttask-results/20260918/xxx.json?X-Amz-...
 ```
 
@@ -476,7 +476,7 @@ MCP 里只有两个放描述的位置，FastTask 对应地拆成两层：
 
 - 客户端访问 `/mcp` 时会经历一次 307 跳转（`/mcp` → `/mcp/`），官方 MCP 客户端会自动跟随
 - 容器使用自签证书时，客户端需要信任该证书（如 Node 系客户端设置 `NODE_EXTRA_CA_CERTS`）。
-  若客户端用 IP 或域名访问，还需把 `PUBLIC_HOST` 设成该地址，否则会因证书 CN/SAN 不匹配而失败
+  若客户端用 IP 或域名访问，还需把 `PUBLIC_ENDPOINT` 设成该地址，否则会因证书 CN/SAN 不匹配而失败
 - MCP 传输为无状态模式：任务状态由 `result_id` 定位，服务重启后依然可用
 - 工具数量随任务数增长（每个任务最多 3 个），可用 `ENABLED_TASKS` 控制暴露范围
 

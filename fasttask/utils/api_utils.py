@@ -620,13 +620,13 @@ class RequestContextMiddleware(BaseHTTPMiddleware):
     预签名时若拿得到就返回完整 URL，拿不到则退回相对路径。
 
     地址来源依次为：
-    1. ``PUBLIC_HOST``：部署时声明的对外地址，最可靠
+    1. ``PUBLIC_ENDPOINT``：部署时声明的对外地址，最可靠
     2. ``X-Forwarded-Host`` + ``X-Forwarded-Proto``：反代透传的原始地址
     3. ``Host``：直连场景下就是客户端访问的地址
     """
 
     async def dispatch(self, request: Request, call_next):
-        public_host = os.environ.get("PUBLIC_HOST", "").strip()
+        public_host = os.environ.get("PUBLIC_ENDPOINT", "").strip()
         if public_host:
             # scheme 固定 https：FastTask 的 API 一律走 TLS
             base_url = f"https://{public_host}"

@@ -29,6 +29,7 @@ from utils.api_utils import (
     FlowerProxyMiddleware,
     SelectiveGZipMiddleware,
     LoggingMiddleware,
+    RequestContextMiddleware,
 )
 from utils.result_storage import (
     ResultType,
@@ -170,6 +171,10 @@ if get_bool_env("DEBUG"):
 
 if get_bool_env("FLOWER_ENABLED"):
     app.add_middleware(FlowerProxyMiddleware)
+
+# 记录请求的对外地址，供外置结果生成可直接访问的下载 URL。
+# 放在 S3Proxy 之前注册 = 比它更内层，S3 的转发请求（下载/上传）不必经过这里。
+app.add_middleware(RequestContextMiddleware)
 
 if _mcp_app is not None:
     # MCP 子应用自带认证（复用 FastTask 既有的 HTTP Basic 凭据）
