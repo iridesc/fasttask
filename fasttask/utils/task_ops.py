@@ -119,6 +119,10 @@ def run_task_sync(task_name, params_dict, task_id, result_model=None):
     ``self.request.id`` 为 None，一旦结果需要外置就会产生互相覆盖的
     ``None.json``。任务包装层对 is_eager 的执行不做外置，因此这里拿到的是
     真实结果（run 的语义就是直接拿结果）。
+
+    返回值里刻意不带 result_id：run 的结果随本次响应一次性交付，backend 里
+    并没有这条记录，回传 id 只会让调用方拿去 check，然后拿到与 "执行成功"
+    自相矛盾的 PENDING/None。（task_id 仍然传给 apply()，用于日志与并发锁。）
     """
     try:
         eager = load_task(task_name).apply(
@@ -128,7 +132,7 @@ def run_task_sync(task_name, params_dict, task_id, result_model=None):
         )
     except Exception:  # noqa: BLE001 - 任务模块加载失败等
         return _payload(
-            task_id,
+            "",
             TaskState.failure.value,
             ResultType.text.value,
             traceback.format_exc(),
@@ -136,14 +140,14 @@ def run_task_sync(task_name, params_dict, task_id, result_model=None):
 
     if eager.state != TaskState.success.value:
         return _payload(
-            task_id,
+            "",
             eager.state,
             ResultType.text.value,
             f"{eager.result=} {eager.traceback=}",
         )
 
     result_type, payload = describe_success(eager.result, result_model)
-    return _payload(task_id, TaskState.success.value, result_type, payload)
+    return _payload("", TaskState.success.value, result_type, payload)
 
 
 def new_task_id(running_id):

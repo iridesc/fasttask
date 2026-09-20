@@ -193,6 +193,10 @@ def _register_run_tool(mcp, task_name, params_model, result_model, running_id_ge
         "超出客户端等待时间会失败。耗时任务请改用 "
         f"create_{task_name} + check_{task_name}。",
         "小结果直接返回；过大时会截断并给出提示（需要完整结果请走异步流程）。",
+        # 这里刻意强调：run 的结果随本次响应一次性交付，不产生可查询的任务 id。
+        "注意：结果已随本次响应返回，不会产生可查询的任务 id（返回的 "
+        "result_id 为空）；请不要拿它去调 check，需要可查询的任务请用 "
+        f"create_{task_name}。",
     ]
     if doc:
         lines.append(f"任务说明：{doc}")
