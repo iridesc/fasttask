@@ -157,7 +157,38 @@ def main():
     mtime_after = os.path.getmtime(os.environ["SSL_CERTFILE"])
     check("PUBLIC_ENDPOINT 未变时复用证书（不重新生成）", mtime_before == mtime_after, True)
 
-    # 8. split_host_port 的单元行为
+    # 8. PUBLIC_ENDPOINT 取值校验（非法配置必须报错，而不是静默生成坏证书）
+    validate = run_module.validate_public_endpoint
+    for value, label in [
+        ("", "空值"),
+        ("192.0.2.10:9014", "IP:端口"),
+        ("192.0.2.10", "IP"),
+        ("fp.example.com:8443", "域名:端口"),
+        ("[::1]:9014", "IPv6:端口"),
+    ]:
+        try:
+            validate(value)
+            print(f"✅ 校验通过（合法）: {label} {value!r}")
+        except Exception as error:  # noqa: BLE001
+            print(f"❌ 校验误拦: {label} {value!r} -> {error}")
+            failures.append(f"合法值被误拦: {value!r}")
+
+    for value, label in [
+        ('"192.0.2.10:9014"', "带双引号"),
+        ("'192.0.2.10:9014'", "带单引号"),
+        ("192.0.2.10:90a4", "端口非数字"),
+        (":9014", "缺主机"),
+        ("http://192.0.2.10:9014", "带 scheme"),
+        ("192.0.2.10:9014 ", "尾部空格"),
+    ]:
+        try:
+            validate(value)
+            print(f"❌ 非法值未被拦截: {label} {value!r}")
+            failures.append(f"非法值未拦截: {value!r}")
+        except Exception:  # noqa: BLE001
+            print(f"✅ 校验拦截（非法）: {label} {value!r}")
+
+    # 9. split_host_port 的单元行为
     split = run_module.split_host_port
     check("split_host_port('h:9014')", split("h:9014"), "h")
     check("split_host_port('h')", split("h"), "h")

@@ -62,6 +62,32 @@ def init_dir(dir_path):
         print(f"{log_prefix} folder created. '{dir_path}'")
 
 
+def validate_public_endpoint(value):
+    """校验 PUBLIC_ENDPOINT 的取值合法；不合法直接失败。
+
+    这里刻意**不做容错清洗**：值写错就该立刻报错，而不是静默生成一张坏证书。
+    典型错误是 compose 的 list 形式里写成 ``KEY="1.2.3.4:9014"`` —— 引号会成为值的
+    一部分，结果是 CN 里多个引号、IP 被当成域名（SAN 变成 DNS:1.2.3.4）。这种错误
+    从启动日志上完全看不出来，只有等客户端连不上才暴露，所以必须在入口就拦下。
+    """
+    if not value:
+        return
+    illegal = [c for c in ('"', "'", " ", "\t", "/", "\\") if c in value]
+    if illegal:
+        raise Exception(
+            f"PUBLIC_ENDPOINT 含非法字符 {illegal!r}: {value!r}\n"
+            "  它应当是 host 或 host:port（如 10.24.103.95:9014）。\n"
+            "  常见原因：docker compose 的 list 形式里写了 KEY=\"...\"，"
+            "引号会被当成值的一部分（改用 KEY=... 或 map 形式）。"
+        )
+    host, sep, port = value.rpartition(":")
+    if sep:
+        if not port.isdigit():
+            raise Exception(f"PUBLIC_ENDPOINT 的端口不是数字: {value!r}")
+        if not host:
+            raise Exception(f"PUBLIC_ENDPOINT 缺少主机部分: {value!r}")
+
+
 def split_host_port(public_endpoint):
     """把 ``host[:port]`` 拆成纯主机部分（剥掉端口）。
 
@@ -301,7 +327,12 @@ env_type_to_envs = {
         # 一处配置同时决定两件事：自签证书的 CN/SAN，以及外置结果返回的下载地址前缀。
         # 默认空 = 证书用 localhost、下载地址按请求头推导（与历史行为一致）。
         # 部署在以 IP/域名访问的环境下应当显式设置，否则证书主机名校验会失败。
-        Env("PUBLIC_ENDPOINT", default_value="", optional=True),
+        Env(
+            "PUBLIC_ENDPOINT",
+            default_value="",
+            optional=True,
+            init_func=validate_public_endpoint,
+        ),
         Env(
             "SSL_CERTFILE",
             "/fasttask/files/fasttask/ssl_cert/cert.pem",
