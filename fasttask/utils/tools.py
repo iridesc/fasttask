@@ -35,13 +35,16 @@ def _{task_name}(self, *args, **kwargs):
         raw_result = _task_func(*args, **kwargs)
 
     # 统一收口：Result 结构校验（fail-fast）+ 规范化 + 按 RESULT_TYPE 决定去向。
-    # 同步执行（/run 与 MCP 的 run_* 走 apply，request.is_eager=True）时结果即时消费，
-    # 不做外置，以保持“run 直接返回结果”的语义。
+    # 是否有 task_id 才是能否外置的前提：外置需要一个稳定的对象键，
+    # 而直接调用任务函数时 request.id 为 None，会写出互相覆盖的 None.json。
+    # 同步执行（/run 与 MCP 的 run_*）现在也会传入 task_id，所以大结果同样可以外置，
+    # 避免几十上百 KB 的原始响应直接堆进调用方上下文；具体是否外置由
+    # RESULT_TYPE（JSON 不外置 / S3、AUTO 按规则外置）与阈值共同决定。
     return finalize_task_result(
         raw_result,
         task_id=self.request.id,
         result_model=_task_result_model,
-        offload=not self.request.is_eager and self.request.id is not None,
+        offload=self.request.id is not None,
     )
 """
 

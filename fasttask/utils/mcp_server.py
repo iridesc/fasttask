@@ -46,8 +46,10 @@ from utils.tools import get_bool_env
 MCP_PATH = "/mcp"
 MCP_SERVER_NAME = "fasttask"
 
-# run_* 是同步执行、结果直接进上下文；超过该体量就截断并引导改用 create + check
-_RUN_INLINE_LIMIT = 200 * 1024
+# run_* 走 JSON（未开外置）时结果直接进上下文；超过该体量就截断并引导改用 create + check。
+# 阈值取 100KB：约两三万 token，再大就会明显挤占上下文。
+# 开了 RESULT_TYPE=S3/AUTO 时大结果会直接外置，不走这条截断逻辑。
+_RUN_INLINE_LIMIT = 100 * 1024
 
 # MCP 的说明分两层：instructions（全局一份，讲“这个模块是什么、平台怎么用”）
 # 与 tools[].description（每个工具一份，讲“这个任务干什么”）。
@@ -364,10 +366,14 @@ def _register_run_tool(mcp, task_name, params_model, result_model, running_id_ge
     doc = task_doc(task_name)
     lines = [
         f"同步执行 {task_name} 任务并直接返回结果（不进入任务队列）。",
-        "仅适合预计数秒内完成的任务：执行期间会一直占用本次调用，"
-        "超出客户端等待时间会失败。耗时任务请改用 "
-        f"create_{task_name} + check_{task_name}。",
-        "小结果直接返回；过大时会截断并给出提示（需要完整结果请走异步流程）。",
+        # 把适用条件写死在这里：instructions 里那句中优先 create 的规则留了
+        # “除非工具说明明确写了”这个后门，不写清楚 AI 会自行认定单个参数也算特例。
+        "只在本次调用很快返回时才用本工具，例如单个或极少量目标、结果体量小；"
+        "批量目标、或参数可能很大时请改用 "
+        f"create_{task_name} + check_{task_name}（后台执行，不会阻塞本次调用，"
+        "大结果会自动外置）。",
+        "执行期间会一直占用本次调用，超出客户端等待时间会失败。",
+        "小结果直接返回；过大时会截断并给出提示，或外置为可下载的引用。",
         # 这里刻意强调：run 的结果随本次响应一次性交付，不产生可查询的任务 id。
         "注意：结果已随本次响应返回，不会产生可查询的任务 id（返回的 "
         "result_id 为空）；请不要拿它去调 check，需要可查询的任务请用 "

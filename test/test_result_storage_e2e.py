@@ -285,8 +285,10 @@ try:
         print(f"  HTTP {bad.status_code}")
         check("status=422", bad.status_code == 422, bad.status_code)
 
-        section("6. /run 同步执行不做结果外置（直接返回结果）")
-        # size=5000 超过阈值：走 create 会被外置，走 run 应该仍然内联
+        section("6. /run 同步执行：超过阈值时同样外置，避免大结果堆进调用方上下文")
+        # 测试环境阈值是 1 字节，所以 size=5000 必然外置；
+        # 小结果（未超阈值）仍内联，见上一节的 run 用例。
+        # 未开外置（RESULT_TYPE=JSON）时 run 始终内联，行为与历史版本一致。
         run_resp = httpx.post(
             f"{API_BASE}/run/e2e_payload",
             json={"size": 5000, "tag": "sync"},
@@ -295,17 +297,25 @@ try:
         print(f"  state={run_resp['state']} result_type={run_resp['result_type']}")
         check("state=SUCCESS", run_resp["state"] == "SUCCESS", run_resp)
         check(
-            "result_type=json（同步执行不外置）",
-            run_resp["result_type"] == "json",
+            "result_type=s3（超过阈值时 run 也外置）",
+            run_resp["result_type"] == "s3",
             run_resp["result_type"],
         )
         check(
-            "result 是真实结果而非引用",
-            isinstance(run_resp["result"], dict)
-            and run_resp["result"].get("payload") == "x" * 5000,
+            "result 是引用而非内容",
+            isinstance(run_resp["result"], dict) and "url" in run_resp["result"],
             str(run_resp["result"])[:120],
         )
-        check("tag 透传", run_resp["result"].get("tag") == "sync", run_resp["result"])
+        reference = run_resp["result"]
+        downloaded = httpx.get(f"{API_BASE}{reference['url']}", timeout=30)
+        check("外置结果可经代理下载", downloaded.status_code == 200, downloaded.status_code)
+        stored = downloaded.json()
+        check(
+            "下载内容正确",
+            stored.get("payload") == "x" * 5000,
+            str(stored)[:120],
+        )
+        check("tag 透传", stored.get("tag") == "sync", str(stored)[:120])
 
         section("7. MCP 端点默认启用（API_MCP 默认 True，且不影响其它接口）")
         mcp_resp = httpx.post(

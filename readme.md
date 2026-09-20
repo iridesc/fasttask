@@ -361,6 +361,10 @@ environment:
 当 `RESULT_TYPE` 为 `S3`/`AUTO` 时，启动会做前置校验：`S3_PRESIGN_EXPIRES` 与 `RESULT_EXPIRES` 都必须小于
 `FILE_EXPIRATION_SECONDS`，避免出现“下载地址有效但对象已被清理”的悬空引用。
 
+`/run` 与 MCP 的 `run_*` 也会遵循这套规则：小结果直接内联，超过阈值就外置并返回引用，
+避免把几十上百 KB 的原始响应堆进调用方上下文。未开外置（`RESULT_TYPE=JSON`）时
+`/run` 始终内联，与历史版本行为一致。
+
 ### 结果下载地址
 
 外置结果的 `result.url` 是**相对路径**（形如 `/fasttask-results/20260918/xxx.json?X-Amz-...`）：
