@@ -261,6 +261,36 @@ def _as_structured(tool_fn, task_name, result_model):
     return tool_fn
 
 
+def _primary_tool(task_name):
+    """本任务用哪个工具承载完整的业务说明。
+
+    任务 docstring 常有几百字符，而每个任务会生成 3 个工具。三份全文既浪费上下文，
+    也让注意力被重复内容分散，所以只在「主工具」上给全文，其余给一行摘要。
+    主工具优先取 create（默认入口）；未启用时依次退到 run、check，
+    保证无论模块怎么配，任务说明总有一处能看到全文。
+    """
+    for flag, name in (
+        ("API_CREATE", f"create_{task_name}"),
+        ("API_RUN", f"run_{task_name}"),
+        ("API_CHECK", f"check_{task_name}"),
+    ):
+        if get_bool_env(flag):
+            return name
+    return ""
+
+
+def _task_business_lines(task_name, tool_name):
+    """任务自身的业务说明：主工具给全文，其余给一行摘要。"""
+    doc = task_doc(task_name)
+    if not doc:
+        return []
+    primary = _primary_tool(task_name)
+    if tool_name == primary:
+        return [f"任务说明：{doc}"]
+    hint = f"（完整说明见 {primary}）" if primary else ""
+    return [f"该任务：{_first_paragraph(doc)}{hint}"]
+
+
 def _register_create_tool(mcp, task_name, params_model, result_model, running_id_getter):
     async def create_tool(**kwargs) -> dict:
         params = params_model(**kwargs) if params_model is not None else kwargs
@@ -277,16 +307,12 @@ def _register_create_tool(mcp, task_name, params_model, result_model, running_id
     else:
         _as_structured(create_tool, task_name, result_model)
 
-    doc = task_doc(task_name)
-    lines = [
-        f"创建 {task_name} 异步任务，立即返回 result_id，任务在后台排队执行。",
-        "这是执行本任务的**默认方式**；仅在你需要在本轮对话里立即拿到结果时才考虑 "
-        f"run_{task_name}（它不产生可查询的 id）。",
-    ]
-    if doc:
-        lines.append(f"任务说明：{doc}")
-    if get_bool_env("API_CHECK"):
-        lines.append(f"用 check_{task_name}(result_id=...) 查询状态与结果。")
+    # 工具描述只讲"这个工具做什么"，平台约定（优先 create、result_id 用法、
+    # run 的代价、结果形态与下载）统一放 instructions，避免每个工具重复一遍。
+    # 任务自身的业务说明只在本任务的一个工具上给全文，其余给一行摘要 ——
+    # 否则同一份 500+ 字符的 docstring 会在 create/check/run 里各出现一次。
+    lines = [f"创建 {task_name} 异步任务（默认入口）。"]
+    lines.extend(_task_business_lines(task_name, create_tool.__name__))
     mcp.tool(name=create_tool.__name__, description="\n".join(lines))(create_tool)
 
 
@@ -300,17 +326,8 @@ def _register_check_tool(mcp, task_name, result_model, running_id_getter):
     check_tool.__name__ = f"check_{task_name}"
     _as_structured(check_tool, task_name, result_model)
 
-    # 参数/状态/结果形态这些通用约定已写在 instructions 里，这里只补本任务特有的部分，
-    # 避免每个工具重复一大段。
-    doc = task_doc(task_name)
-    lines = [
-        f"查询 {task_name} 任务的执行状态与结果。result_id 由 create_{task_name} 返回。",
-        "返回形态与下载方式见本服务说明；state=SUCCESS 且 result_type=s3 时"
-        "请按 result.url 下载后再解析，不要直接读入上下文。",
-    ]
-    if doc:
-        lines.append(f"该任务：{_first_paragraph(doc)}")
-    lines.append(f"返回结果如需再次获取，直接重调本工具（预签名地址有时效）。")
+    lines = [f"查询 {task_name} 任务的状态与结果。"]
+    lines.extend(_task_business_lines(task_name, check_tool.__name__))
     mcp.tool(name=check_tool.__name__, description="\n".join(lines))(check_tool)
 
 
@@ -335,33 +352,8 @@ def _register_run_tool(mcp, task_name, params_model, result_model, running_id_ge
         _as_structured(run_tool, task_name, result_model)
 
     doc = task_doc(task_name)
-    lines = [
-        f"同步执行 {task_name} 任务并直接返回结果（不进入任务队列）。",
-    ]
-    if get_bool_env("API_CREATE"):
-        # create 可用时明确要求优先用它。之前的写法只说“批量目标请改用 create”，
-        # 于是 AI 一看“就一个 URL”就自判合规地用了 run —— 描述里给了它一个
-        # 可以自行解释的例外，实际就不再优先 create 了。这里把默认流程写死。
-        lines.append(
-            f"不要默认用本工具：请优先使用 create_{task_name} + "
-            f"check_{task_name}（后台执行，不占用本次调用，结果一样可以下载）。"
-            "只有当你确实需要在本轮对话里立即拿到结果、且目标数量极少时才用它。"
-        )
-        lines.append(
-            "执行期间会一直占用本次调用，超出客户端等待时间会失败；且不会产生"
-            "可查询的任务 id（返回的 result_id 为空），结果只能一次性消费。"
-        )
-    else:
-        # 没开 create 时它是唯一途径，不再劝退
-        lines.append(
-            f"create_{task_name} 在本服务未启用，这是执行 {task_name} 的唯一方式。"
-            "执行期间会一直占用本次调用，超出客户端等待时间会失败。"
-        )
-    lines.append(
-        "结果要么全量返回，要么（服务端开启外置且超过阈值时）返回可下载的 s3 引用。"
-    )
-    if doc:
-        lines.append(f"任务说明：{doc}")
+    lines = [f"同步执行 {task_name} 并直接返回结果（结果随本次响应返回）。"]
+    lines.extend(_task_business_lines(task_name, run_tool.__name__))
     mcp.tool(name=run_tool.__name__, description="\n".join(lines))(run_tool)
 
 
