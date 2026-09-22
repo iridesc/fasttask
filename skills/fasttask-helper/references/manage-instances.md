@@ -17,7 +17,7 @@
   例如 `AbCd1234`。
 - 该实例下每个任务的 **result_id = `{RUNNING_ID}-{uuid4}`**，例如 `AbCd1234-1a2b3c4d-5e6f-4a8b-9c0d-1e2f3a4b5c6d`。
 - **前缀校验**：`/check` 与 `/revoke` 都会校验传入的 `result_id` 必须以**当前实例**的 RUNNING_ID 开头，
-  否则直接拒绝（返回 `invalid {result_id=} current {RUNNING_ID=}`）。
+  否则直接拒绝（返回 `invalid result_id=... current running_id=...`）。
 - 含义：上层系统（任务编排/调度平台，或父任务的子任务清单）里记录/返回的 `result_id`，就是下发到
   某个实例上的任务 ID；**要 revoke 它，必须打到它所属的那个实例上**，且该实例尚未更换 RUNNING_ID
   （重启后 Redis 持久化则不变，Redis 被清则旧任务全部无法管理）。
@@ -52,14 +52,29 @@ FTT_PASSWD=<用户提供的密码>
 | `/status_info` | POST | 实例运行状态：RUNNING_ID、worker、任务统计、排队数 |
 | `/openapi.json` | GET | 接口文档（含该实例加载了哪些 task_name） |
 
+每个端点都由 `API_*` 开关控制（默认全 `True`，用 `GET /openapi.json` 看实际有哪些路径）：
+
+| 开关 | 管什么 |
+|---|---|
+| `API_STATUS_INFO` | `/status_info`（关掉后 MCP 的 `fasttask_status` 也不存在） |
+| `API_REVOKE` | `/revoke`（关掉后就无法撤销，只能等超时） |
+| `API_RUN` / `API_CREATE` / `API_CHECK` | 同步执行 / 异步创建 / 查询 |
+| `API_FILE_DOWNLOAD` / `API_FILE_UPLOAD` / `API_DOCS` / `API_MCP` | 文件下载 / 上传 / Swagger / MCP |
+
+所以接口调不通时先看 openapi 里路径在不在：`404` 很可能不是地址写错，而是对方没开这个接口。
+
 ---
 
 ## 2. 看实例上有哪些任务在跑：/status_info
 
 ```bash
 curl -sk -u $FTT_USER:$FTT_PASSWD -X POST https://$FTT_HOST:$FTT_PORT/status_info \
-  -H "Content-Type: application/json" -d '{}'
+  -H "Content-Type: application/json" \
+  -d '{"fields": ["worker_status", "task_info", "pending_task_count"]}'
 ```
+
+**`fields` 必须显式传**：它默认为空列表，不传就只返回 `running_id` / `username`，其余字段全是
+空 `{}`（不是接口坏了）。字段名写错会被 schema 拒绝（HTTP 422）。
 
 返回示例：
 
@@ -68,21 +83,29 @@ curl -sk -u $FTT_USER:$FTT_PASSWD -X POST https://$FTT_HOST:$FTT_PORT/status_inf
   "running_id": "AbCd1234",
   "username": "<user>",
   "worker_status": {},
-  "task_info_total": {},
-  "pending_task_count": {},
-  "task_info_task_a": {},
+  "task_info_total": {
+    "status_to_amount": {"SUCCESS": 12, "FAILURE": 1},
+    "completed_counts": {"success_in_1_hour": 5, "failure_in_1_hour": 1},
+    "throughput_rates_per_second": {"success_in_1_hour": 0.0}
+  },
+  "pending_task_count": {"task_a": 0},
+  "task_info_task_a": {"status_to_amount": {"SUCCESS": 12}, "completed_counts": {}, "throughput_rates_per_second": {}},
   "task_info_task_b": {}
 }
 ```
 
 字段含义：
 - `running_id`：当前实例的 RUNNING_ID —— **先确认它和要管理的 result_id 前缀一致**，不一致则 revoke 必失败。
-- `task_info_{task_name}` / `task_info_total`：按任务名统计的状态分布（哪些任务在跑/等待/失败），
-  其中 `task_a`/`task_b` 即该实例已加载的任务名。
+- `task_info_{task_name}`：**该实例已加载的任务名都体现在这些 key 上**（后缀就是 task_name），
+  值是该任务的状态分布统计；`task_info_total` 是全部任务合计。
+- 每个统计对象三个子字段：`status_to_amount`（各状态数量）、`completed_counts`（最近 1 分钟 /
+  15 分钟 / 1 小时 / 1 天的完成数）、`throughput_rates_per_second`（吞吐率，只有
+  `success_in_*` / `failure_in_*` 这些 key 有意义）。
 - `pending_task_count`：各任务队列中待消费数量。
 - `worker_status`：celery worker 存活情况（体量小/无 worker 时常为空对象）。
 
-POST body 可选 `{"fields": ["worker_status", "task_info", "pending_task_count"]}` 控制返回哪些字段。
+> 排查提示：`status_info` 只给**状态分布与计数**，不列具体 result_id。要定位「哪些任务还在跑」
+> 得从上层系统的子任务清单拿 result_id，再用 `/check` 逐个确认。
 
 ---
 
@@ -98,14 +121,19 @@ curl -sk -u $FTT_USER:$FTT_PASSWD \
 返回 `{id, state, result_type, result}`：
 - `state` ∈ `PENDING` / `STARTED` / `SUCCESS` / `FAILURE` / `REVOKED` / `RETRY`
 - `SUCCESS` + `result_type=json`：`result` 为任务结构化输出
-- `SUCCESS` + `result_type=s3`：结果已外置到对象存储，`result` 是引用
-  （`{uri, url, size_bytes, sha256, expires_at}`）。**不要把 result 当成结果用**，
-  用 `result.url` 下载后再解析（它是**相对路径**，拼上服务地址即可，无需额外凭据）；
-  地址过期就重新 check 一次
+- `SUCCESS` + `result_type=s3`：结果已外置到对象存储，`result` 是**四字段引用**
+  `{size_bytes, sha256, url, expires_at}`（**没有** `uri` 之类字段）。**不要把 result
+  当成结果用**，用 `result.url` 下载后再解析，无需额外凭据；地址过期就重新 check 一次
+- `result.url` 有两种形态，**看开头是不是 `http` 就能判断**：
+  - `https://host:port/...?X-Amz-...`（实例配了 `PUBLIC_ENDPOINT`）→ 直接下载
+  - `/fasttask-results/...?X-Amz-...`（相对路径）→ 拼上服务地址：`https://$FTT_HOST:$FTT_PORT<result.url>`
 - 下载外置结果的示例（**只带预签名地址，不要加 Basic 凭据，会破坏签名**）：
-  `curl -sk "https://$FTT_HOST:$FTT_PORT<result.url>" -o result.json && jq . result.json`
+  `curl -sk "<url>" -o result.json && jq . result.json`
 - `FAILURE` + `result_type=text`：`result` 含 `result=... traceback=...`，可据此定位失败原因
-- 若返回 `{result_id=...} not exist, current {RUNNING_ID=}` → 该 ID 不属于当前实例（前缀错 / 实例已换 Redis）
+- 若返回 `result_id='...' not exist, current running_id='...'` → 该 ID 不属于当前实例
+  （前缀错 / 实例已换 Redis）
+- 实例若开了 `RESPONSE_COMPRESS`（默认开），服务端只在客户端声明 `Accept-Encoding: gzip` 时才压缩；
+  `requests` / `httpx` 自动解压，用 curl 手动下载时加 `--compressed`
 
 ---
 
@@ -129,7 +157,7 @@ curl -sk -u $FTT_USER:$FTT_PASSWD -X POST https://$FTT_HOST:$FTT_PORT/revoke \
 | `task is still pending, will revoked later` | PENDING | 还在排队未开始，撤销已登记、稍后生效 |
 | `task started, revoking now` | STARTED | 正在执行，正在 terminate 强杀 |
 | `task retrying, revoking now` | RETRY | 重试中，正在终止 |
-| `invalid {result_id=} current {RUNNING_ID=}` | — | 前缀不属于当前实例，**撤销失败**（status=FAILURE），检查打错实例/实例换过 Redis |
+| `invalid result_id=... current running_id=...` | — | 前缀不属于当前实例，**撤销失败**（status=FAILURE），检查打错实例/实例换过 Redis |
 
 > **"撤销成功" ≠ "立刻 REVOKED"**：PENDING 状态撤销是异步的（worker 消费到撤销信号后才标记）。
 > 想确认最终生效，revoke 后稍等（如 5 秒）再 `/check`，看到 `state=REVOKED` 才算真正终止。
@@ -197,11 +225,15 @@ for rid in result_ids[:5]:
 
 ## 6. 注意事项与排查
 
-- **打错实例**：revoke/check 返回 `invalid ... current RUNNING_ID=` → result_id 前缀与当前实例
-  running_id 不一致。核对 HOST/PORT 是否指对了任务实际运行的实例。
+- **打错实例**：revoke/check 返回 `invalid result_id=... current running_id=...` → result_id 前缀与
+  当前实例 running_id 不一致。核对 HOST/PORT 是否指对了任务实际运行的实例。
 - **PENDING 撤销不立即 REVOKED**：正常，等 worker 消费撤销信号；可稍后再 check。
 - **撤销已结束任务**：返回 `task ended or revoked already`，status=SUCCESS，无副作用。
 - **想查某任务失败原因**：用 `/check` 看 `FAILURE` 的 `result`（含 traceback），别只盯着 state。
 - **上层联动**：撤销实例子任务后，若上层系统（编排/调度平台）仍在等回调，子任务在上层侧会一直
   `running`；如需整链停掉，要在上层系统侧一并处理。
+- **404 / 405 先怀疑接口开关**：`/revoke`、`/status_info` 等分别由 `API_REVOKE`、`API_STATUS_INFO`
+  控制（生产环境常只开 create/check）。拉一次 openapi 看路径在不在，比反复改 URL 快。
 - **curl 自签证书**：必须 `-k`；python requests 必须 `verify=False`，否则 TLS 报错。
+- **响应可能被 gzip**：普通响应与结果下载共用 `RESPONSE_COMPRESS`（默认开）。带库的客户端无感，
+  curl 手动抓取时加 `--compressed`，否则存下来是压缩字节。
