@@ -236,15 +236,80 @@ def test_flower_disabled():
 # 测试 3: 环境变量校验
 # ============================================================
 def test_env_validation():
-    """验证 check_envs() 中的 FILE_EXPIRATION_SECONDS >= 60 校验"""
+    """验证 check_envs() 的 FILE_EXPIRATION_SECONDS 约束：
+
+    ≥ 60 秒，且严格大于 RESULT_EXPIRES（不限模式、不受清理开关影响）。
+    """
     print_section("测试 3: 环境变量校验")
 
+    sys.path.insert(0, "/fasttask")
+    try:
+        import run
+    except Exception as error:  # noqa: BLE001
+        print(f"  ⚠️  无法导入 run: {error}")
+        return False
+
+    base = {
+        "SOFT_TIME_LIMIT": "86400",
+        "TIME_LIMIT": "86500",
+        "VISIBILITY_TIMEOUT": "86600",
+        "RESULT_TYPE": "JSON",
+        "RESULT_EXPIRES": "259200",
+        "FILE_EXPIRATION_SECONDS": "518400",
+        "FILE_CLEANUP_ENABLED": "True",
+        "FILE_CLEANUP_INTERVAL_SECONDS": "5184",
+        "RESPONSE_COMPRESS_MAX_BUFFER": "16777216",
+    }
+
+    def run_check(overrides):
+        """临时环境跑一次 check_envs()，返回报错文本（通过则为空串）。
+
+        base 必须覆盖 check_envs() 会读取的每个变量：podman exec 不会继承
+        run.py 运行时写入的环境变量，漏一个就会因 None 而被拒。
+        """
+        envs = {**base, **overrides}
+        saved = {k: os.environ.get(k) for k in envs}
+        os.environ.update(envs)
+        try:
+            run.check_envs()
+            return ""
+        except Exception as error:  # noqa: BLE001
+            return str(error)
+        finally:
+            for key, value in saved.items():
+                if value is None:
+                    os.environ.pop(key, None)
+                else:
+                    os.environ[key] = value
+
     all_ok = True
-    all_ok &= check(60 >= 60, "FILE_EXPIRATION_SECONDS=60 通过 (>= 60)")
-    all_ok &= check(3600 >= 60, "FILE_EXPIRATION_SECONDS=3600 通过 (>= 60)")
-    all_ok &= check(30 < 60, "FILE_EXPIRATION_SECONDS=30 被拒绝 (< 60)")
-    all_ok &= check(0 < 60, "FILE_EXPIRATION_SECONDS=0 被拒绝 (< 60)")
-    all_ok &= check(True, "FILE_CLEANUP_ENABLED=False 时跳过校验")
+    all_ok &= check(run_check({}) == "", "默认组合（518400 > 259200）通过")
+    all_ok &= check(
+        "must be greater than RESULT_EXPIRES"
+        in run_check({"FILE_EXPIRATION_SECONDS": "259200"}),
+        "FILE_EXPIRATION_SECONDS == RESULT_EXPIRES 被拒绝",
+    )
+    all_ok &= check(
+        "must be greater than RESULT_EXPIRES"
+        in run_check({"RESULT_EXPIRES": "900", "FILE_EXPIRATION_SECONDS": "600"}),
+        "FILE_EXPIRATION_SECONDS < RESULT_EXPIRES 被拒绝",
+    )
+    all_ok &= check(
+        "must be at least 60 seconds"
+        in run_check({"RESULT_EXPIRES": "10", "FILE_EXPIRATION_SECONDS": "30"}),
+        "FILE_EXPIRATION_SECONDS=30 被拒绝 (< 60)",
+    )
+    all_ok &= check(
+        run_check(
+            {"FILE_CLEANUP_ENABLED": "False", "FILE_EXPIRATION_SECONDS": "259200"}
+        )
+        != "",
+        "JSON + 清理关闭时同样强制（与 RESULT_TYPE / 清理开关无关）",
+    )
+    all_ok &= check(
+        run_check({"FILE_EXPIRATION_SECONDS": str(100 * 86400)}) == "",
+        "保留期无上限（100 天通过）",
+    )
 
     if all_ok:
         print("\n✅ 测试 3 全部通过")

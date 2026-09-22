@@ -279,11 +279,12 @@ FastTask 内建文件自动过期删除机制，由 Supervisor 管理的独立�
 - 递归扫描 `files/` 下所有子目录（始终跳过 `files/fasttask/` 系统目录）
 - 支持通过 `FILE_CLEANUP_SKIP_PATTERNS` 配置额外的跳过路径（逗号分隔的相对路径，相对于 `files/` 目录）
 - 文件删除后若所在目录为空，一并清理空目录
-- 每 10 分钟执行一次清理扫描
+- 按 `FILE_CLEANUP_INTERVAL_SECONDS` 周期执行清理扫描（默认保留期的 1/100，夹在 1 分钟到 3 天之间；默认 6 天保留期 → 1.44 小时）
 
 相关配置：
-- **FILE_CLEANUP_ENABLED**：是否启用文件清理（默认 `True`）。设为 `False` 时，清理进程不会启动
-- **FILE_EXPIRATION_SECONDS**：文件过期时间（秒），默认为 `SOFT_TIME_LIMIT` × 10（约 10 天）。当 `FILE_CLEANUP_ENABLED=True` 时，该值必须 ≥ 60 秒，否则系统启动会报错退出
+- **FILE_CLEANUP_ENABLED**：是否启用清理（默认 `True`）。清理进程是否启动只看它；`RESULT_TYPE=S3/AUTO` 时若设为 `False`，对象存储里的过期结果也不会被清理（启动时会打印警告，需自行运维）
+- **FILE_EXPIRATION_SECONDS**：保留期（秒），同时管本地 `files/` 与对象存储里的结果对象。默认为 `RESULT_EXPIRES` × 2（≥ 60 秒），无上限。必须 ≥ 60 秒**且大于 `RESULT_EXPIRES`**（与是否启用清理、用不用对象存储无关），否则系统启动会报错退出
+- **FILE_CLEANUP_INTERVAL_SECONDS**：清理扫描周期（秒），默认为 `FILE_EXPIRATION_SECONDS` ÷ 100，并夹在 60 秒到 3 天之间（默认 6 天保留期 → 5184 秒）。文件清理与对象存储过期对象清理共用同一周期。仅当 `FILE_CLEANUP_ENABLED=True` 时校验：必须 ≥ 1 且小于 `FILE_EXPIRATION_SECONDS`，否则系统启动报错退出
 - **FILE_CLEANUP_SKIP_PATTERNS**：清理时需要额外跳过的路径（逗号分隔，相对于 `files/` 目录）。例如 `".lazy_action,.disk_cache_reset.lock"` 可跳过指定的文件/目录。默认为空（仅跳过 `files/fasttask/`）。配置的路径不存在时不会报错
 
 
@@ -361,10 +362,11 @@ environment:
 - **通过 API 端口的路径代理对外提供**：客户端用访问 FastTask 的同一个地址即可下载结果，
   所以部署时只需要映射 API 端口（`9001:443`），不必给对象存储单独开端口
 - master 启动时会自检并自动创建 bucket，配置错误在启动阶段就暴露
-- 过期对象由清理进程按 `FILE_EXPIRATION_SECONDS` 删除（仅 `single_node` / `distributed_master`）
+- 过期对象由清理进程按 `FILE_EXPIRATION_SECONDS` 删除（需 `FILE_CLEANUP_ENABLED=True`，且仅 `single_node` / `distributed_master`）
 
-当 `RESULT_TYPE` 为 `S3`/`AUTO` 时，启动会做前置校验：`S3_PRESIGN_EXPIRES` 与 `RESULT_EXPIRES` 都必须小于
-`FILE_EXPIRATION_SECONDS`，避免出现“下载地址有效但对象已被清理”的悬空引用。
+启动会做前置校验：`FILE_EXPIRATION_SECONDS` 必须大于 `RESULT_EXPIRES`（结果引用不能比可清理的文件活得更久，
+否则 result_id 还没过期、配套的中间文件已被清掉，排查时无据可查）；当 `RESULT_TYPE` 为 `S3`/`AUTO` 时，
+额外要求 `S3_PRESIGN_EXPIRES` 也小于 `FILE_EXPIRATION_SECONDS`，避免出现“下载地址有效但对象已被清理”的悬空引用。
 
 `/run` 与 MCP 的 `run_*` 也会遵循这套规则：小结果直接内联，超过阈值就外置并返回引用，
 避免把几十上百 KB 的原始响应堆进调用方上下文。未开外置（`RESULT_TYPE=JSON`）时
@@ -391,6 +393,12 @@ jq . result.json
 
 url 之外的三个字段：`size_bytes`（体量）、`sha256`（校验完整性）、
 `expires_at`（签名过期时间）。
+
+下载同样享受**传输压缩**：客户端只要声明 `Accept-Encoding: gzip`，服务端就把结果 gzip 后再发
+（结果 JSON 通常只剩 12%~16% 的体积），`requests` / `httpx` / 浏览器会自动解压，调用方无感；
+下载完的字节与 `size_bytes`、`sha256` 完全一致（这两个值始终按未压缩的原始内容计算）。
+注意用 `curl` 手动抓取时，若自己加了该请求头就要加 `--compressed` 让它解压，否则拿到的是压缩字节。
+关闭或调优见 [响应压缩](#响应压缩)。
 
 - 客户端（`fasttask_manager >= 0.6.0`）会自动处理两种情况，调用方拿到的始终是真实结果
 - 下载地址有时效，过期后重新 `check` 一次即可获得新地址
@@ -482,8 +490,9 @@ MCP 里只有两个放描述的位置，FastTask 对应地拆成两层：
 
 ## 响应压缩
 
-- **RESPONSE_COMPRESS**：是否启用响应 gzip 压缩，默认为 `True`。仅在客户端发送 `Accept-Encoding: gzip` 时生效，未声明该头的客户端收到的响应与压缩前完全一致；压缩在线程池中执行，不会阻塞事件循环。`/download`、`/flower` 以及 `text/event-stream` 响应会自动跳过。小于 1000 字节的响应不压缩
-- **RESPONSE_COMPRESS_LEVEL**：gzip 压缩级别，默认为 `5`（范围 0-9）。级别越高压缩率略好但 CPU 开销明显更大：以 55MB 的 JSON 为例，1 级耗时 148ms / 压缩率 15.7%，9 级耗时 1129ms / 压缩率 11.8%。级别越高仅适合客户端链路越慢的场景（客户端带宽低于约 97Mbps 时 5 级才比 1 级划算），内网千兆环境推荐用 3 左右
+- **RESPONSE_COMPRESS**：是否启用 gzip 传输压缩，默认为 `True`。**普通 API 响应与对象存储结果下载共用这一套参数**。仅在客户端发送 `Accept-Encoding: gzip` 时生效，未声明该头的客户端收到的响应与压缩前完全一致；压缩在线程池中执行，不会阻塞事件循环。`/download`、`/flower` 以及 `text/event-stream` 响应会自动跳过，小于 1000 字节的响应不压缩。对象存储下载另有以下自动跳过：带 `Range` 的请求（压缩会破坏 `Content-Range` 的字节语义）、上游已带 `Content-Encoding`（不二次压缩）、`HEAD` 请求与非 `application/json` 的内容；压缩后与压缩内容不符的 `Content-MD5`、`x-amz-checksum-*` 会被剔除，`ETag` 会被弱化（`W/` 前缀），并补上 `Vary: Accept-Encoding`
+- **RESPONSE_COMPRESS_LEVEL**：gzip 压缩级别，默认为 `5`（范围 0-9），两条链路共用。级别越高压缩率略好但 CPU 开销明显更大：以 55MB 的 JSON 为例，1 级耗时 148ms / 压缩率 15.7%，9 级耗时 1129ms / 压缩率 11.8%。级别越高仅适合客户端链路越慢的场景（客户端带宽低于约 97Mbps 时 5 级才比 1 级划算），内网千兆环境推荐用 3 左右
+- **RESPONSE_COMPRESS_MAX_BUFFER**：整块缓冲的上限（字节），默认 `16777216`（16MB），两条链路共用。不超过该值就攒成完整 body 再压，能保留精确的 `Content-Length`；超过后普通 API 响应放弃压缩、原样透传，对象存储下载改为边收边压（分块传输、无 `Content-Length`，内存占用只多一个数据块）。必须大于 0，否则系统启动报错退出
 
 ## Flower 监控
 
@@ -493,8 +502,9 @@ MCP 里只有两个放描述的位置，FastTask 对应地拆成两层：
 
 ## 文件清理
 
-- **FILE_CLEANUP_ENABLED**：是否启用文件过期清理（默认 `True`）。设为 `False` 则清理进程不启动
-- **FILE_EXPIRATION_SECONDS**：文件过期时间（秒），默认为 `SOFT_TIME_LIMIT` × 10。当 `FILE_CLEANUP_ENABLED=True` 时，该值必须 ≥ 60 秒，否则系统启动报错退出
+- **FILE_CLEANUP_ENABLED**：是否启用清理（默认 `True`）。清理进程是否启动只看它；`RESULT_TYPE=S3/AUTO` 时若设为 `False`，对象存储中的过期结果也不会被清理（启动打印警告）
+- **FILE_EXPIRATION_SECONDS**：保留期（秒），默认为 `RESULT_EXPIRES` × 2（≥ 60 秒），无上限。必须 ≥ 60 秒且大于 `RESULT_EXPIRES`，否则系统启动报错退出
+- **FILE_CLEANUP_INTERVAL_SECONDS**：清理扫描周期（秒），默认为 `FILE_EXPIRATION_SECONDS` ÷ 100，夹在 60 秒到 3 天之间（默认保留期 6 天 → 5184 秒）。文件清理与对象存储过期对象清理共用该周期。仅当 `FILE_CLEANUP_ENABLED=True` 时校验：须 ≥ 1 且小于 `FILE_EXPIRATION_SECONDS`
 - **FILE_CLEANUP_SKIP_PATTERNS**：清理时需要额外跳过的路径，逗号分隔的相对路径（相对于 `files/` 目录），默认为空。配置示例：`".lazy_action,.disk_cache_reset.lock"`
 
 ## 调试

@@ -147,7 +147,7 @@ app = FastAPI(
 
 
 
-# 响应压缩：默认开启（RESPONSE_COMPRESS=False 关闭），压缩级别由 RESPONSE_COMPRESS_LEVEL 控制。
+# 响应压缩：默认开启（RESPONSE_COMPRESS=False 关闭），参数与对象存储下载压缩共用：
 # - 仅在客户端声明 Accept-Encoding: gzip 时生效，向后兼容；
 # - 压缩在线程池中执行（zlib 压缩期间释放 GIL），不会阻塞事件循环；
 # - /download、/flower 已在 SelectiveGZipMiddleware 中排除。
@@ -156,7 +156,9 @@ app = FastAPI(
 #   more_body=True 的分块再转发。GZip 若在外层就只能看到这种"伪流式"响应，
 #   既要多缓冲一份完整 body，还会被 max_buffer 上限误伤。
 if get_bool_env("RESPONSE_COMPRESS"):
-    # 对象存储响应直传（大文件无收益），与 /download、/flower 一同跳过压缩
+    # /download 对已压缩文件无收益，/flower 有自己的前端表现，两者跳过；
+    # 对象存储下载走 S3ProxyMiddleware（更外层），本就进不到这里，显式排除
+    # 只是把语义写清楚——它读的是同一套 RESPONSE_COMPRESS* 参数。
     exclude_prefixes = ["/download", "/flower"]
     if is_s3_enabled():
         exclude_prefixes.append(f"/{get_bucket()}/")
@@ -164,6 +166,7 @@ if get_bool_env("RESPONSE_COMPRESS"):
         SelectiveGZipMiddleware,
         minimum_size=1000,
         compresslevel=int(os.environ["RESPONSE_COMPRESS_LEVEL"]),
+        max_buffer=int(os.environ["RESPONSE_COMPRESS_MAX_BUFFER"]),
         exclude_prefixes=tuple(exclude_prefixes),
     )
 
@@ -191,6 +194,11 @@ if is_s3_enabled():
         S3ProxyMiddleware,
         bucket=get_bucket(),
         endpoint=get_s3_endpoint(),
+        # 传输压缩：与普通响应共用 RESPONSE_COMPRESS* 一套参数；超过 max_buffer
+        # 的大对象改为边收边压（chunked）。
+        compress=get_bool_env("RESPONSE_COMPRESS"),
+        compresslevel=int(os.environ["RESPONSE_COMPRESS_LEVEL"]),
+        max_buffer=int(os.environ["RESPONSE_COMPRESS_MAX_BUFFER"]),
     )
 
 if get_bool_env("API_DOCS"):

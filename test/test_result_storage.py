@@ -9,7 +9,7 @@
   6. 生产端 Result 结构校验（fail-fast）
   7. 存储层 payload 结构
   8. 任务包装模板生成与导入方式
-  9. 启动期环境校验（check_result_storage_envs）
+  9. 启动期环境校验（check_envs / check_result_storage_envs）
  10. bucket 自检与过期对象清理
 
 依赖：一个 S3 兼容对象存储（MinIO / versitygw / Ceph 均可）。
@@ -239,11 +239,11 @@ section("9. 启动期环境校验")
 import run  # noqa: E402
 
 
-def expect_fail(envs, keyword):
+def expect_fail(envs, keyword, checker=None):
     original = {k: os.environ.get(k) for k in envs}
     os.environ.update(envs)
     try:
-        run.check_result_storage_envs()
+        (checker or run.check_result_storage_envs)()
     except Exception as error:  # noqa: BLE001
         check(f"拦截: {keyword[:42]}", keyword in str(error), error)
     else:
@@ -272,17 +272,68 @@ finally:
         if _value is not None:
             os.environ[_key] = _value
 
+# `FILE_EXPIRATION_SECONDS > RESULT_EXPIRES` 是全局约束（不限模式、不受清理开关影响），
+# 在 check_envs() 里执行，所以这里指定 checker。
+_expiration_base = {
+    "SOFT_TIME_LIMIT": "86400",
+    "TIME_LIMIT": "86500",
+    "VISIBILITY_TIMEOUT": "86600",
+    "FILE_CLEANUP_ENABLED": "True",
+    "FILE_CLEANUP_INTERVAL_SECONDS": "600",
+    # check_envs() 会读取它；exec 环境不继承 run.py 运行时写入的变量，必须显式给值
+    "RESPONSE_COMPRESS_MAX_BUFFER": "16777216",
+}
 expect_fail(
     {
-        "RESULT_TYPE": "AUTO",
-        "S3_ENDPOINT": "x:9000",
-        "S3_BUCKET": "b",
+        **_expiration_base,
+        "RESULT_TYPE": "JSON",
+        "RESULT_EXPIRES": "600",
+        "FILE_EXPIRATION_SECONDS": "600",
+    },
+    "FILE_EXPIRATION_SECONDS must be greater than RESULT_EXPIRES",
+    checker=run.check_envs,
+)
+expect_fail(
+    {
+        **_expiration_base,
+        "RESULT_TYPE": "JSON",
         "RESULT_EXPIRES": "900",
         "FILE_EXPIRATION_SECONDS": "600",
-        "S3_PRESIGN_EXPIRES": "60",
     },
-    "RESULT_EXPIRES must be less than FILE_EXPIRATION_SECONDS",
+    "FILE_EXPIRATION_SECONDS must be greater than RESULT_EXPIRES",
+    checker=run.check_envs,
 )
+expect_fail(
+    {
+        **_expiration_base,
+        "RESULT_TYPE": "JSON",
+        "RESULT_EXPIRES": "600",
+        "FILE_EXPIRATION_SECONDS": "30",
+    },
+    "FILE_EXPIRATION_SECONDS must be at least 60 seconds",
+    checker=run.check_envs,
+)
+# 正例：JSON 模式下保留期为结果存活期的 2 倍，应当通过
+_ok_envs = {
+    **_expiration_base,
+    "RESULT_TYPE": "JSON",
+    "RESULT_EXPIRES": "600",
+    "FILE_EXPIRATION_SECONDS": "1200",
+}
+_ok_original = {k: os.environ.get(k) for k in _ok_envs}
+os.environ.update(_ok_envs)
+try:
+    run.check_envs()
+    check("JSON 模式保留期 > RESULT_EXPIRES 通过", True)
+except Exception as error:  # noqa: BLE001
+    check("JSON 模式保留期 > RESULT_EXPIRES 通过", False, error)
+finally:
+    for k, v in _ok_original.items():
+        if v is None:
+            os.environ.pop(k, None)
+        else:
+            os.environ[k] = v
+
 expect_fail(
     {
         "RESULT_TYPE": "AUTO",

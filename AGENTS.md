@@ -88,7 +88,7 @@ fasttask/
 │   ├── tools.py         # 任务加载、环境变量读取辅助
 │   ├── api_utils.py     # 认证、Worker 状态、文件管理、Flower 代理中间件、日志中间件
 │   ├── result_storage.py # 结果校验/规范化、大结果外置对象存储、预签名下载
-│   ├── s3_proxy.py      # 对象存储透明代理（复用 API 端口，转发时重写 Host）
+│   ├── s3_proxy.py      # 对象存储透明代理（复用 API 端口，转发时重写 Host；可选 gzip 传输压缩）
 │   ├── mcp_server.py    # MCP 适配层：把现有接口翻译成 MCP 工具（跟随 API_* 开关）
 │   ├── task_ops.py      # 创建/查询/同步执行的共享实现（HTTP 与 MCP 共用）
 │   └── redis_lock.py    # Redis 并发控制（严格锁，冲突直接失败）
@@ -133,10 +133,13 @@ fasttask/
 - `SOFT_TIME_LIMIT`：任务软超时（秒），默认 86400，超时后发送 SIGKILL
 - `TIME_LIMIT`：硬超时，默认 `SOFT_TIME_LIMIT + 60`
 - `VISIBILITY_TIMEOUT`：Celery broker 可见性超时，默认 `TIME_LIMIT + 60`
-- `RESULT_EXPIRES`：结果过期时间（秒），默认 259200（3 天）
+- `RESULT_EXPIRES`：结果过期时间（秒），默认 259200（3 天）。必须小于 `FILE_EXPIRATION_SECONDS`
 - `RESULT_TYPE`：结果存储方式，默认 `JSON`。`S3` 一律上传对象存储、`AUTO` 超过 `RESULT_AUTO_TO_S3_SIZE` 才上传；`S3`/`AUTO` 需要配置 `S3_*`。**开启后会改变 `/check` 响应的 result 形态（破坏性），客户端需先升到 `fasttask_manager >= 0.6.0`**
 - `RESULT_AUTO_TO_S3_SIZE`：`AUTO` 模式阈值（字节），默认 1MB
 - `RESULT_TO_S3_TRIES`：结果上传对象存储的重试次数，默认 3，重试后仍失败则任务失败
+- `RESPONSE_COMPRESS`：是否启用 gzip 传输压缩，默认 `True`。**普通 API 响应与对象存储结果下载共用这一套参数**（`RESPONSE_COMPRESS` / `RESPONSE_COMPRESS_LEVEL` / `RESPONSE_COMPRESS_MAX_BUFFER`）。仅客户端声明 `Accept-Encoding: gzip` 时生效，客户端自动解压、`sha256`/`size_bytes` 语义不变；`/download`、`/flower`、`text/event-stream`、小于 1000 字节自动跳过。对象存储下载额外跳过：带 `Range` 的请求、上游已带 `Content-Encoding`、`HEAD` 与非 `application/json` 内容；压缩后会剔除 `Content-MD5`/`x-amz-checksum-*`、弱化 `ETag`（`W/` 前缀）并补 `Vary: Accept-Encoding`。超过 `RESPONSE_COMPRESS_MAX_BUFFER`（默认 16MB）时：普通响应透传，对象存储下载改为边收边压（无 `Content-Length`），压缩级别均为 `RESPONSE_COMPRESS_LEVEL`
+- `RESPONSE_COMPRESS_LEVEL`：gzip 压缩级别，默认 `5`（范围 0-9），两条链路共用。级别越高压缩率略好但 CPU 明显更贵：以 55MB JSON 为例，1 级 148ms / 15.7%，9 级 1129ms / 11.8%。链路带宽越高越适合低级别
+- `RESPONSE_COMPRESS_MAX_BUFFER`：整块缓冲上限（字节），默认 16MB，两条链路共用；必须 > 0
 - 对象存储（`S3_PORT` / `S3_BUCKET` / `S3_ENDPOINT` / 凭据等）均为**模块内置约定**，默认值已就绪，用户只需 `RESULT_TYPE` 开关。下载地址是相对路径，通过 API 端口的路径代理提供，无需暴露额外端口。可被环境变量覆盖（供测试），但不对外文档化
 - `WORKER_CONCURRENCY`：Worker 并发数，默认 CPU 核数
 - `WORKER_POOL`：Worker 池类型，默认 `prefork`，可选 `gevent`
@@ -144,11 +147,11 @@ fasttask/
 - `FLOWER_ENABLED`：是否启用 Flower 监控，默认 `False`
 - `API_RUN` / `API_CREATE` / `API_CHECK` 等：控制各类接口是否启用，默认 `True`
 - `API_MCP`：是否启用 MCP 端点（`/mcp`），默认 `True`。工具按 `API_*` 开关动态注册，描述随可用接口变化。它只新增端点、不改变现有接口行为
-- `RESPONSE_COMPRESS`：是否启用响应 gzip 压缩，默认 `True`。仅在客户端发送 `Accept-Encoding: gzip` 时生效，未声明的客户端行为完全不变；压缩在线程池中执行，不阻塞事件循环。`/download`、`/flower` 以及 `text/event-stream` 响应会自动跳过
-- `RESPONSE_COMPRESS_LEVEL`：gzip 压缩级别，默认 `5`（范围 0-9）。级别越高压缩率略好但 CPU 明显更贵：以 55MB JSON 为例，1 级 148ms / 15.7%，9 级 1129ms / 11.8%。链路带宽越高越适合低级别
+
 - `DEBUG`：启用后通过 `LoggingMiddleware` 打印详细请求/响应日志
-- `FILE_CLEANUP_ENABLED`：是否启用文件过期清理，默认 `True`
-- `FILE_EXPIRATION_SECONDS`：文件过期时间（秒），默认 `SOFT_TIME_LIMIT × 10`
+- `FILE_CLEANUP_ENABLED`：是否启用清理，默认 `True`。清理进程是否启动只看它；`RESULT_TYPE=S3/AUTO` 时若设为 `False`，对象存储中的过期结果也不会被清理（启动打印警告）
+- `FILE_EXPIRATION_SECONDS`：保留期（秒），同时管本地 `files/` 与对象存储中的结果对象，默认 `RESULT_EXPIRES × 2`（≥ 60 秒，无上限）。必须 ≥ 60 秒且大于 `RESULT_EXPIRES`，否则启动报错
+- `FILE_CLEANUP_INTERVAL_SECONDS`：清理扫描周期（秒），默认 `FILE_EXPIRATION_SECONDS ÷ 100` 并夹在 [60, 3 天] 之间（默认保留期 6 天 → 5184 秒）。文件清理与对象存储过期对象清理共用；仅当 `FILE_CLEANUP_ENABLED=True` 时校验，须 ≥ 1 且小于 `FILE_EXPIRATION_SECONDS`
 - `FILE_CLEANUP_SKIP_PATTERNS`：清理时额外跳过的路径（逗号分隔，相对于 `files/`），默认为空。`files/fasttask/` 始终被跳过，无需配置
 
 ### Redis 数据库分布

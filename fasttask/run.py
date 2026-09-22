@@ -203,6 +203,20 @@ def generate_ssl_certs():
     )
 
 
+def default_cleanup_interval():
+    """清理周期的默认值：保留期的 1/100，并夹在 [1 分钟, 3 天] 之间。
+
+    清理间隔的语义是「过期后最多多久被扫到」，因此跟着 FILE_EXPIRATION_SECONDS
+    （保留期）走，而不是任务时长。默认 6 天保留期 → 5184 秒（1.44 小时）。
+
+    保留期被压到很短时（例如 60 秒），「1 分钟下限」反而会让间隔 ≥ 保留期、
+    变成永远清不干净，这时收敛到 expiration - 1 保证严格小于。
+    """
+    expiration = int(os.environ["FILE_EXPIRATION_SECONDS"])
+    interval = min(3 * 24 * 60 * 60, max(60, expiration // 100))
+    return min(interval, max(1, expiration - 1))
+
+
 def show_banner():
     print("""
 
@@ -218,9 +232,21 @@ env_type_to_envs = {
         Env("NODE_TYPE"),
         Env("SOFT_TIME_LIMIT", default_value=24 * 60 * 60),
         Env("FILE_CLEANUP_ENABLED", "True"),
+        # 结果引用的存活期（默认 3 天）：Redis 里的结果、以及对象存储引用的有效期。
+        # 必须在 FILE_EXPIRATION_SECONDS 之前初始化：后者的默认值以它为基准。
+        Env("RESULT_EXPIRES", f"{3 * 24 * 60 * 60}"),
+        # 保留期：默认取 RESULT_EXPIRES 的 2 倍，且不少于 60 秒；无上限。
+        # 它同时管本地 files/ 与对象存储里的结果对象。必须严格大于 RESULT_EXPIRES，
+        # 否则 result_id 还没失效、配套文件（排查证据）就已经被清掉。
         Env(
             "FILE_EXPIRATION_SECONDS",
-            default_value=lambda: int(os.environ.get("SOFT_TIME_LIMIT")) * 10,
+            default_value=lambda: max(60, int(os.environ["RESULT_EXPIRES"]) * 2),
+        ),
+        # 清理扫描周期：默认 = 保留期 / 100，夹在 [1 分钟, 3 天] 之间。
+        # 允许用户覆盖（不设 force_default），过期文件的滞留时间随保留期等比伸缩。
+        Env(
+            "FILE_CLEANUP_INTERVAL_SECONDS",
+            default_value=default_cleanup_interval,
         ),
         Env(
             "TIME_LIMIT",
@@ -230,7 +256,6 @@ env_type_to_envs = {
             "VISIBILITY_TIMEOUT",
             default_value=lambda: int(os.environ.get("TIME_LIMIT")) + 60,
         ),
-        Env("RESULT_EXPIRES", f"{3 * 24 * 60 * 60}"),
         # 结果存储层：JSON（默认，内联在 Celery backend）/ S3 / AUTO（超阈值走对象存储）
         Env("RESULT_TYPE", "JSON"),
         Env("RESULT_AUTO_TO_S3_SIZE", str(1024 * 1024)),
@@ -245,9 +270,22 @@ env_type_to_envs = {
         Env("S3_REGION", "us-east-1", force_default=True),
         Env("S3_SECURE", "False", force_default=True),
         Env("S3_VERIFY_SSL", "True", force_default=True),
+        # 响应 gzip 传输压缩：普通 API 响应与对象存储结果下载共用同一套参数。
+        # 仅在客户端声明 Accept-Encoding: gzip 时生效；级别越高压缩率略好但 CPU 更贵。
+        # MAX_BUFFER 是整块缓冲的上限：超过后普通响应放弃压缩直接透传，
+        # 对象存储下载改为边收边压（分块传输、无 Content-Length）。
+        Env("RESPONSE_COMPRESS", "True"),
+        Env("RESPONSE_COMPRESS_LEVEL", 5),
+        Env("RESPONSE_COMPRESS_MAX_BUFFER", str(16 * 1024 * 1024)),
         Env(
             "S3_PRESIGN_EXPIRES",
-            default_value=lambda: int(os.environ.get("SOFT_TIME_LIMIT")),
+            # 预签名有效期：默认取 SOFT_TIME_LIMIT，但不超过保留期的一半。
+            # 直接用 SOFT_TIME_LIMIT 时，长任务部署（SOFT_TIME_LIMIT 大于保留期）
+            # 会因“预签名 < 保留期”这条硬约束而启动失败。
+            default_value=lambda: min(
+                int(os.environ["SOFT_TIME_LIMIT"]),
+                int(os.environ["FILE_EXPIRATION_SECONDS"]) // 2,
+            ),
             force_default=True,
         ),
         Env(
@@ -367,8 +405,6 @@ env_type_to_envs = {
         Env("API_REVOKE", "True"),
         Env("API_FILE_DOWNLOAD", "True"),
         Env("API_FILE_UPLOAD", "True"),
-        Env("RESPONSE_COMPRESS", "True"),
-        Env("RESPONSE_COMPRESS_LEVEL", 5),
         Env("FLOWER_PORT", "5555", force_default=True),
         Env("FLOWER_UNAUTHENTICATED_API", "True", force_default=True),
         Env("FLOWER_MAX_TASKS", "1000"),
@@ -388,8 +424,6 @@ env_type_to_envs = {
         Env("API_REVOKE", "True"),
         Env("API_FILE_DOWNLOAD", "True"),
         Env("API_FILE_UPLOAD", "True"),
-        Env("RESPONSE_COMPRESS", "True"),
-        Env("RESPONSE_COMPRESS_LEVEL", 5),
         Env("FLOWER_PORT", "5555", force_default=True),
         Env("FLOWER_UNAUTHENTICATED_API", "True", force_default=True),
         Env("FLOWER_MAX_TASKS", "1000"),
@@ -430,10 +464,10 @@ def assemble_supervisor_conf():
     if node_type in ("single_node", "distributed_worker"):
         shutil.copy(os.path.join(template_dir, "celery.conf"), conf_dir)
 
-    # file_cleanup：开启文件清理，或结果外置到对象存储（需要清理过期对象）时启用
-    if os.environ.get("FILE_CLEANUP_ENABLED", "False") == "True" or (
-        os.environ.get("RESULT_TYPE", "JSON").strip().upper() in ("S3", "AUTO")
-    ):
+    # file_cleanup：进程是否启动只看 FILE_CLEANUP_ENABLED。要不要顺带清对象存储里的
+    # 过期结果，由进程内部按 is_s3_enabled() 自行判断，这里不掺和
+    # （代价是关掉清理后桶需自行运维，启动时会打印警告）。
+    if os.environ.get("FILE_CLEANUP_ENABLED", "False") == "True":
         shutil.copy(os.path.join(template_dir, "file_cleanup.conf"), conf_dir)
 
 
@@ -460,12 +494,51 @@ def check_envs():
     if TIME_LIMIT >= VISIBILITY_TIMEOUT:
         raise Exception("VISIBILITY_TIMEOUT must be greater than TIME_LIMIT")
 
+    # 保留期必须严格大于结果引用的存活期：否则 result_id 还没过期，files/ 里的
+    # 中间文件就已经被清掉，排查时拿着 id 什么也查不到。
+    # 与是否启用清理、用不用对象存储无关，一律强制；保留期无上限。
+    result_expires = _int_env("RESULT_EXPIRES", 0)
+    expiration = _int_env("FILE_EXPIRATION_SECONDS", 0)
+    if expiration < 60:
+        raise Exception(
+            f"FILE_EXPIRATION_SECONDS must be at least 60 seconds, got {expiration}"
+        )
+    if expiration <= result_expires:
+        raise Exception(
+            "FILE_EXPIRATION_SECONDS must be greater than RESULT_EXPIRES: "
+            f"FILE_EXPIRATION_SECONDS={expiration} "
+            f"RESULT_EXPIRES={result_expires}"
+        )
+
     if os.environ.get("FILE_CLEANUP_ENABLED", "False") == "True":
-        expiration = int(os.environ.get("FILE_EXPIRATION_SECONDS", 0))
-        if expiration < 60:
+        interval = _int_env("FILE_CLEANUP_INTERVAL_SECONDS", 0)
+        if interval < 1:
             raise Exception(
-                f"FILE_EXPIRATION_SECONDS must be at least 60 seconds, got {expiration}"
+                f"FILE_CLEANUP_INTERVAL_SECONDS must be >= 1, got {interval}"
             )
+        # 间隔不小于保留期时，过期文件永远等不到清理窗口
+        if interval >= expiration:
+            raise Exception(
+                "FILE_CLEANUP_INTERVAL_SECONDS must be less than "
+                "FILE_EXPIRATION_SECONDS: "
+                f"FILE_CLEANUP_INTERVAL_SECONDS={interval} "
+                f"FILE_EXPIRATION_SECONDS={expiration}"
+            )
+    else:
+        # 清理进程不会启动：对象存储里的过期结果没人删，属于会静默积压的配置
+        result_type = os.environ.get("RESULT_TYPE", "JSON").strip().upper()
+        if result_type in ("S3", "AUTO"):
+            print(
+                f"{log_prefix} 警告：RESULT_TYPE={result_type} 但 "
+                "FILE_CLEANUP_ENABLED=False，对象存储中的过期结果不会被清理，"
+                "需自行运维（设置 FILE_CLEANUP_ENABLED=True 可恢复自动清理）"
+            )
+
+    response_buffer = _int_env("RESPONSE_COMPRESS_MAX_BUFFER", 0)
+    if response_buffer <= 0:
+        raise Exception(
+            f"RESPONSE_COMPRESS_MAX_BUFFER must be > 0, got {response_buffer}"
+        )
 
     check_result_storage_envs()
 
@@ -522,15 +595,8 @@ def check_result_storage_envs():
             f"FILE_EXPIRATION_SECONDS={file_expiration}"
         )
 
-    # 结果引用（Redis）必须早于对象清理（对象存储）失效，
-    # 否则 check 会返回一个指向已被删除对象的引用。
-    result_expires = _int_env("RESULT_EXPIRES", 0)
-    if result_expires >= file_expiration:
-        raise Exception(
-            "RESULT_EXPIRES must be less than FILE_EXPIRATION_SECONDS: "
-            f"RESULT_EXPIRES={result_expires} "
-            f"FILE_EXPIRATION_SECONDS={file_expiration}"
-        )
+    # 结果引用（Redis）必须早于对象清理（对象存储）失效这条约束，
+    # 在 check_envs() 里统一执行（不限模式，也不受清理开关影响）。
 
 
 def main():

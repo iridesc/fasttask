@@ -336,7 +336,7 @@ class SelectiveGZipMiddleware:
         app,
         minimum_size: int = 1000,
         compresslevel: int = 5,
-        max_buffer: int = 50 * 1024 * 1024,
+        max_buffer: int = 16 * 1024 * 1024,
         exclude_prefixes=("/download", "/flower"),
     ):
         self.app = app

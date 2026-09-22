@@ -30,6 +30,27 @@ def _should_skip(path, skip_paths):
     return False
 
 
+def _get_cleanup_interval():
+    """清理扫描周期（秒），只读取、不推导。
+
+    周期的确定是 run.py 的职责（唯一权威来源，含默认值与校验），本进程只从
+    环境变量取值。若在这里再算一次，就变成两套口径，改了一边忘另一边迟早不一致。
+    """
+    raw = os.environ.get("FILE_CLEANUP_INTERVAL_SECONDS")
+    if raw is None:
+        raise SystemExit(
+            "缺少环境变量 FILE_CLEANUP_INTERVAL_SECONDS（应由 run.py 注入）；"
+            "手动运行本脚本时请自行指定，单位秒。"
+        )
+    try:
+        interval = int(raw)
+    except ValueError:
+        raise SystemExit(f"FILE_CLEANUP_INTERVAL_SECONDS 不是整数: {raw!r}") from None
+    if interval < 1:
+        raise SystemExit(f"FILE_CLEANUP_INTERVAL_SECONDS 必须 >= 1, got {interval}")
+    return interval
+
+
 def cleanup_expired_files():
     """递归扫描 files/ 目录，删除过期文件和空目录。
 
@@ -99,10 +120,11 @@ def cleanup_expired_s3_results():
 
 
 if __name__ == "__main__":
-    print("文件清理进程已启动")
+    interval = _get_cleanup_interval()
+    print(f"文件清理进程已启动（清理周期 {interval} 秒）")
     cleanup_expired_files()
     cleanup_expired_s3_results()
     while True:
-        time.sleep(600)
+        time.sleep(interval)
         cleanup_expired_files()
         cleanup_expired_s3_results()
