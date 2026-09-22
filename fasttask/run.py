@@ -76,7 +76,7 @@ def validate_public_endpoint(value):
     if illegal:
         raise Exception(
             f"PUBLIC_ENDPOINT 含非法字符 {illegal!r}: {value!r}\n"
-            "  它应当是 host 或 host:port（如 10.24.103.95:9014）。\n"
+            "  它应当是 host 或 host:port（如 10.0.0.1:9014）。\n"
             "  常见原因：docker compose 的 list 形式里写了 KEY=\"...\"，"
             "引号会被当成值的一部分（改用 KEY=... 或 map 形式）。"
         )
@@ -145,7 +145,7 @@ def generate_ssl_certs():
     ssl_certfile = os.environ["SSL_CERTFILE"]
     cn_marker = os.path.join(os.environ["SSL_CERT_DIR"], "cert.cn")
 
-    # PUBLIC_ENDPOINT（客户端访问本服务的 host[:port]，与 S3_ENDPOINT 同一套写法）
+    # PUBLIC_ENDPOINT：客户端访问本服务的地址（可带端口，如 10.0.0.1:9014 或 fp.example.com）。
     # 一处决定两件事：证书的 CN/SAN
     # 与外置结果的下载地址前缀。未设置时回落 localhost（与历史行为一致）。
     public_endpoint = os.environ.get("PUBLIC_ENDPOINT", "").strip()
@@ -260,13 +260,11 @@ env_type_to_envs = {
         Env("RESULT_TYPE", "JSON"),
         Env("RESULT_AUTO_TO_S3_SIZE", str(1024 * 1024)),
         Env("RESULT_TO_S3_TRIES", "3"),
-        # 对象存储：模块内置，均为内部实现约定（端口/桶名/地址等），
-        # 改了只会出错，因此全部 force_default。
+        # 对象存储：模块内置，无法指向外部实例（地址由 get_s3_endpoint 按节点类型推导）。
+        # 以下均为内部实现约定，改了只会出错，因此全部 force_default。
         # 行为参数（上传重试次数、AUTO 阈值）不在此列，允许用户按需调整。
         Env("S3_PORT", "9000", force_default=True),
         Env("S3_BUCKET", "fasttask-results", force_default=True),
-        Env("S3_ENDPOINT", default_value="", optional=True, force_default=True),
-        Env("S3_PREFIX", default_value="", optional=True, force_default=True),
         Env("S3_REGION", "us-east-1", force_default=True),
         Env("S3_SECURE", "False", force_default=True),
         Env("S3_VERIFY_SSL", "True", force_default=True),
@@ -277,17 +275,6 @@ env_type_to_envs = {
         Env("RESPONSE_COMPRESS", "True"),
         Env("RESPONSE_COMPRESS_LEVEL", 5),
         Env("RESPONSE_COMPRESS_MAX_BUFFER", str(16 * 1024 * 1024)),
-        Env(
-            "S3_PRESIGN_EXPIRES",
-            # 预签名有效期：默认取 SOFT_TIME_LIMIT，但不超过保留期的一半。
-            # 直接用 SOFT_TIME_LIMIT 时，长任务部署（SOFT_TIME_LIMIT 大于保留期）
-            # 会因“预签名 < 保留期”这条硬约束而启动失败。
-            default_value=lambda: min(
-                int(os.environ["SOFT_TIME_LIMIT"]),
-                int(os.environ["FILE_EXPIRATION_SECONDS"]) // 2,
-            ),
-            force_default=True,
-        ),
         Env(
             "LOADED_TASKS",
             default_value=lambda: ",".join(
@@ -353,7 +340,7 @@ env_type_to_envs = {
             force_default=True,
             is_print_env=False,
         ),
-        # 客户端访问本服务的地址（可带端口，如 10.24.103.95:9014 或 fp.example.com）。
+        # 客户端访问本服务的地址（可带端口，如 10.0.0.1:9014 或 fp.example.com）。
         # 一处配置同时决定两件事：自签证书的 CN/SAN，以及外置结果返回的下载地址前缀。
         # 默认空 = 证书用 localhost、下载地址按请求头推导（与历史行为一致）。
         # 部署在以 IP/域名访问的环境下应当显式设置，否则证书主机名校验会失败。
@@ -558,7 +545,8 @@ def check_result_storage_envs():
     非法配置一律直接报错：静默兑底（例如把拼错的 ``RESULT_TYPE`` 当成 JSON）
     会让“以为开了外置、实际没开”这类问题极难排查。
 
-    ``S3_ENDPOINT`` / ``S3_BUCKET`` 具备默认值（指向内嵌对象存储），无需强制配置。
+    对象存储地址由 ``get_s3_endpoint()`` 按节点类型推导，无对应环境变量，
+    因此这里只校验取值型参数（重试次数、阈值、端口、结果保留期）。
     """
     result_type = os.environ.get("RESULT_TYPE", "JSON").strip().upper()
     if result_type not in VALID_RESULT_TYPES:
@@ -584,16 +572,14 @@ def check_result_storage_envs():
 
     file_expiration = _int_env("FILE_EXPIRATION_SECONDS", 0)
 
-    # 预签名有效期不得超过对象保留期，否则会出现“URL 有效但对象已删”的悬空地址
-    presign_expires = _int_env("S3_PRESIGN_EXPIRES", 0)
-    if presign_expires <= 0:
-        raise Exception(f"S3_PRESIGN_EXPIRES must be > 0, got {presign_expires}")
-    if presign_expires >= file_expiration:
-        raise Exception(
-            "S3_PRESIGN_EXPIRES must be less than FILE_EXPIRATION_SECONDS: "
-            f"S3_PRESIGN_EXPIRES={presign_expires} "
-            f"FILE_EXPIRATION_SECONDS={file_expiration}"
-        )
+    # 预签名下载地址的有效期取 RESULT_EXPIRES，并在 7 天处封顶
+    # （SigV4 / minio 客户端的硬限制是 1 秒 ~ 7 天）。
+    # 由于封顶后仍满足“链接有效期 ≤ RESULT_EXPIRES”，而 check_envs 已强制
+    # FILE_EXPIRATION_SECONDS > RESULT_EXPIRES，“URL 有效但对象已删”不可能发生，
+    # 因此不对 RESULT_EXPIRES 设上限。
+    result_expires = _int_env("RESULT_EXPIRES", 0)
+    if result_expires <= 0:
+        raise Exception(f"RESULT_EXPIRES must be > 0, got {result_expires}")
 
     # 结果引用（Redis）必须早于对象清理（对象存储）失效这条约束，
     # 在 check_envs() 里统一执行（不限模式，也不受清理开关影响）。

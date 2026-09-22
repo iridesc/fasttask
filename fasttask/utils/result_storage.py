@@ -58,6 +58,10 @@ VALID_RESULT_TYPES = tuple(mode.value for mode in ResultStorageMode)
 #: 不能用任务自己的 Result 字段做判断（会与业务字段冲突），所以用框架私有键。
 STORAGE_MARKER = "__fasttask_storage__"
 
+#: 预签名下载地址的有效期上限（秒）。这是 SigV4 / minio 客户端的硬限制：
+#: expires 必须落在 1 秒 ~ 7 天之间，超出直接报错，所以在这里封顶。
+MAX_PRESIGN_EXPIRES = 7 * 24 * 60 * 60
+
 _CONTENT_TYPE_JSON = "application/json"
 
 _s3_client = None
@@ -95,8 +99,18 @@ def get_auto_offload_size():
     return int(os.environ["RESULT_AUTO_TO_S3_SIZE"])
 
 
+def get_result_expires():
+    """结果引用存活期（秒）：Redis 里的结果能查到多久。无上限。"""
+    return int(os.environ["RESULT_EXPIRES"])
+
+
 def get_presign_expires():
-    return int(os.environ["S3_PRESIGN_EXPIRES"])
+    """预签名下载地址的有效期（秒）：取 RESULT_EXPIRES，但在 7 天处封顶。
+
+    链接有效期没必要超过结果本身的存活期；而 SigV4 又不允许超过 7 天，
+    所以封顶而不是去限制 RESULT_EXPIRES（后者只管结果能查多久，不受此限）。
+    """
+    return min(get_result_expires(), MAX_PRESIGN_EXPIRES)
 
 
 def get_bucket():
@@ -110,20 +124,12 @@ def get_s3_port():
 def get_s3_endpoint():
     """对象存储地址（服务端连接用）。
 
-    未显式配置 `S3_ENDPOINT` 时按内嵌对象存储推导：
-    master / single_node 走本机，worker 走 MASTER_HOST。
+    对象存储是模块内置能力，地址不接受配置，按节点类型推导：
+    master / single_node 直连本机，worker 连 MASTER_HOST（两者均取 S3_PORT）。
     """
-    endpoint = (os.environ.get("S3_ENDPOINT") or "").strip()
-    if endpoint:
-        return endpoint
-
     if os.environ.get("NODE_TYPE") in ("single_node", "distributed_master"):
         return f"127.0.0.1:{get_s3_port()}"
     return f"{os.environ.get('MASTER_HOST', '127.0.0.1')}:{get_s3_port()}"
-
-
-def get_object_prefix():
-    return os.environ.get("S3_PREFIX", "").strip("/")
 
 
 def derive_s3_credentials():
@@ -180,13 +186,9 @@ def get_s3_client():
 # key 与阈值
 # --------------------------------------------------------------------------- #
 def build_object_key(result_id, at=None):
-    """对象 key：``{prefix}/{YYYYMMDD}/{result_id}.json``。"""
+    """对象 key：``{YYYYMMDD}/{result_id}.json``。"""
     date_part = (at or datetime.now(timezone.utc)).strftime("%Y%m%d")
-    return "/".join(
-        part
-        for part in (get_object_prefix(), date_part, f"{result_id}.json")
-        if part
-    )
+    return f"{date_part}/{result_id}.json"
 
 
 def should_offload(size_bytes):
@@ -343,9 +345,7 @@ def cleanup_expired_objects(expiration_seconds):
     cutoff = datetime.now(timezone.utc) - timedelta(seconds=expiration_seconds)
 
     removed = 0
-    for obj in client.list_objects(
-        bucket, prefix=get_object_prefix(), recursive=True
-    ):
+    for obj in client.list_objects(bucket, recursive=True):
         last_modified = obj.last_modified
         if last_modified is not None and last_modified < cutoff:
             client.remove_object(bucket, obj.object_name)

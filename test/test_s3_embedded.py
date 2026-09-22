@@ -154,7 +154,6 @@ try:
             "NODE_TYPE": "distributed_worker",
             "MASTER_HOST": "127.0.0.1",
             "S3_PORT": S3_PORT,
-            "S3_ENDPOINT": f"127.0.0.1:{S3_PORT}",
             "S3_BUCKET": "embedded-selftest",
             "S3_SECURE": "False",
             "TASK_QUEUE_PASSWD": CLUSTER_SECRET,
@@ -162,8 +161,7 @@ try:
             "S3_SECRET_KEY": "",
             "RESULT_TYPE": "AUTO",
             "RESULT_AUTO_TO_S3_SIZE": "1",
-            "S3_PRESIGN_EXPIRES": "3600",
-            "S3_PREFIX": "embedded",
+            "RESULT_EXPIRES": "3600",
             "RESULT_TO_S3_TRIES": "3",
         }
     )

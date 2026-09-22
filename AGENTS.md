@@ -140,7 +140,8 @@ fasttask/
 - `RESPONSE_COMPRESS`：是否启用 gzip 传输压缩，默认 `True`。**普通 API 响应与对象存储结果下载共用这一套参数**（`RESPONSE_COMPRESS` / `RESPONSE_COMPRESS_LEVEL` / `RESPONSE_COMPRESS_MAX_BUFFER`）。仅客户端声明 `Accept-Encoding: gzip` 时生效，客户端自动解压、`sha256`/`size_bytes` 语义不变；`/download`、`/flower`、`text/event-stream`、小于 1000 字节自动跳过。对象存储下载额外跳过：带 `Range` 的请求、上游已带 `Content-Encoding`、`HEAD` 与非 `application/json` 内容；压缩后会剔除 `Content-MD5`/`x-amz-checksum-*`、弱化 `ETag`（`W/` 前缀）并补 `Vary: Accept-Encoding`。超过 `RESPONSE_COMPRESS_MAX_BUFFER`（默认 16MB）时：普通响应透传，对象存储下载改为边收边压（无 `Content-Length`），压缩级别均为 `RESPONSE_COMPRESS_LEVEL`
 - `RESPONSE_COMPRESS_LEVEL`：gzip 压缩级别，默认 `5`（范围 0-9），两条链路共用。级别越高压缩率略好但 CPU 明显更贵：以 55MB JSON 为例，1 级 148ms / 15.7%，9 级 1129ms / 11.8%。链路带宽越高越适合低级别
 - `RESPONSE_COMPRESS_MAX_BUFFER`：整块缓冲上限（字节），默认 16MB，两条链路共用；必须 > 0
-- 对象存储（`S3_PORT` / `S3_BUCKET` / `S3_ENDPOINT` / 凭据等）均为**模块内置约定**，默认值已就绪，用户只需 `RESULT_TYPE` 开关。下载地址是相对路径，通过 API 端口的路径代理提供，无需暴露额外端口。可被环境变量覆盖（供测试），但不对外文档化
+- 对象存储（`S3_PORT` / `S3_BUCKET` / 凭据等）均为**模块内置约定**，默认值已就绪，用户只需 `RESULT_TYPE` 开关。地址由代码按节点类型推导（`single_node`/`distributed_master` → `127.0.0.1:{S3_PORT}`，`distributed_worker` → `{MASTER_HOST}:{S3_PORT}`），没有对应环境变量，也不支持指向外部对象存储
+- 启用 `S3`/`AUTO` 时的部署要求：`RESULT_TYPE` 必须在 master 与所有 worker 上一致（worker 决定是否外置、master 决定是否签发预签名并清理过期对象）；worker 必须能访问 master 的 `TASK_QUEUE_PORT`（默认 6379）与 `S3_PORT`（默认 9000），同容器网络零配置、跨主机需内网放通；客户端下载走 API 端口的路径代理，**对外**无需暴露额外端口
 - `WORKER_CONCURRENCY`：Worker 并发数，默认 CPU 核数
 - `WORKER_POOL`：Worker 池类型，默认 `prefork`，可选 `gevent`
 - `ENABLED_TASKS` / `DISABLED_TASKS`：控制 Worker 执行的任务白名单/黑名单

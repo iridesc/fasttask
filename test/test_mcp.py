@@ -42,7 +42,10 @@ LOADED_TASKS_DIR = FASTTASK_DIR / "loaded_tasks"
 REDIS_HOST = os.environ.get("TEST_REDIS_HOST", "127.0.0.1")
 REDIS_PORT = os.environ.get("TEST_REDIS_PORT", "16379")
 REDIS_PASSWD = os.environ.get("TEST_REDIS_PASSWD", "testpasswd")
-S3_ENDPOINT = os.environ.get("TEST_S3_ENDPOINT", "127.0.0.1:9000")
+S3_PORT = os.environ.get("TEST_S3_PORT", "9000")
+# 对象存储地址由代码按节点类型推导（single_node → 127.0.0.1:{S3_PORT}），
+# 这里保留一份副本，仅用于打印/拼下载 URL。
+S3_ENDPOINT = f"127.0.0.1:{S3_PORT}"
 S3_ACCESS_KEY = os.environ.get("TEST_S3_ACCESS_KEY", "testuser")
 S3_SECRET_KEY = os.environ.get("TEST_S3_SECRET_KEY", "secret")
 S3_SECURE = os.environ.get("TEST_S3_SECURE", "False")
@@ -148,12 +151,13 @@ try:
     # 验收脚本在环境初始化之后再覆盖，用于指向自建的对象存储实例。
     os.environ.update(
         {
-            "S3_ENDPOINT": S3_ENDPOINT,
+            "NODE_TYPE": "single_node",
+            "S3_PORT": S3_PORT,
             "S3_BUCKET": S3_BUCKET,
             "S3_SECURE": S3_SECURE,
             "S3_ACCESS_KEY": S3_ACCESS_KEY,
             "S3_SECRET_KEY": S3_SECRET_KEY,
-            "S3_PRESIGN_EXPIRES": "3600",
+            "RESULT_EXPIRES": "3600",
         }
     )
     os.environ["MASTER_HOST"] = REDIS_HOST

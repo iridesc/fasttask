@@ -36,7 +36,10 @@ from datetime import datetime, timedelta, timezone
 FASTTASK_DIR = pathlib.Path(__file__).resolve().parent.parent / "fasttask"
 sys.path.insert(0, str(FASTTASK_DIR))
 
-S3_ENDPOINT = os.environ.get("TEST_S3_ENDPOINT", "127.0.0.1:9000")
+S3_PORT = os.environ.get("TEST_S3_PORT", "9000")
+# 对象存储地址由代码按节点类型推导（single_node → 127.0.0.1:{S3_PORT}），
+# 这里保留一份副本，仅用于拼下载 URL。
+S3_ENDPOINT = f"127.0.0.1:{S3_PORT}"
 S3_ACCESS_KEY = os.environ.get("TEST_S3_ACCESS_KEY", "testuser")
 S3_SECRET_KEY = os.environ.get("TEST_S3_SECRET_KEY", "secret")
 S3_SECURE = os.environ.get("TEST_S3_SECURE", "False")
@@ -44,7 +47,9 @@ S3_BUCKET = os.environ.get("TEST_S3_BUCKET", "fasttask-result-selftest")
 
 os.environ.update(
     {
-        "S3_ENDPOINT": S3_ENDPOINT,
+        # 让 get_s3_endpoint() 推导到本机对象存储
+        "NODE_TYPE": "single_node",
+        "S3_PORT": S3_PORT,
         "S3_BUCKET": S3_BUCKET,
         "S3_SECURE": S3_SECURE,
         "S3_VERIFY_SSL": os.environ.get("TEST_S3_VERIFY_SSL", "True"),
@@ -53,7 +58,8 @@ os.environ.update(
         "S3_SECRET_KEY": S3_SECRET_KEY,
         "TASK_QUEUE_PASSWD": "selftest-cluster-secret",
         "RESULT_TO_S3_TRIES": "3",
-        "S3_PRESIGN_EXPIRES": "3600",
+        # 预签名下载地址的有效期直接取它（不再有 S3_PRESIGN_EXPIRES）
+        "RESULT_EXPIRES": "3600",
     }
 )
 
@@ -113,12 +119,10 @@ check(
 
 # --------------------------------------------------------------------------- #
 section("2. 对象 key 的日期前缀")
-os.environ["S3_PREFIX"] = "results"
 key = rs.build_object_key("abc-123", at=datetime(2026, 9, 17, tzinfo=timezone.utc))
-check("带 prefix 的 key", key == "results/20260917/abc-123.json", key)
-os.environ["S3_PREFIX"] = ""
+check("对象 key 带日期前缀", key == "20260917/abc-123.json", key)
 key = rs.build_object_key("abc-123", at=datetime(2026, 1, 2, tzinfo=timezone.utc))
-check("无 prefix 的 key", key == "20260102/abc-123.json", key)
+check("日期前缀随时间变化", key == "20260102/abc-123.json", key)
 
 # --------------------------------------------------------------------------- #
 section("3. 结果去向判定（RESULT_TYPE / 阈值）")
@@ -157,7 +161,23 @@ check(
 check("标记字段取值", stored.get(rs.STORAGE_MARKER) == rs.ResultType.s3.value, stored)
 
 # --------------------------------------------------------------------------- #
-section("6. 预签名下载 + sha256 校验")
+# --------------------------------------------------------------------------- #
+section("6. 预签名有效期：取 RESULT_EXPIRES，7 天处封顶")
+_saved_expires = os.environ.get("RESULT_EXPIRES")
+for _value, _expect in (("3600", 3600), (str(30 * 24 * 60 * 60), 7 * 24 * 60 * 60)):
+    os.environ["RESULT_EXPIRES"] = _value
+    check(
+        f"RESULT_EXPIRES={_value} → 链接有效期 {_expect}",
+        rs.get_presign_expires() == _expect,
+        rs.get_presign_expires(),
+    )
+if _saved_expires is None:
+    os.environ.pop("RESULT_EXPIRES", None)
+else:
+    os.environ["RESULT_EXPIRES"] = _saved_expires
+
+
+section("6b. 预签名下载 + sha256 校验")
 reference = rs.build_s3_result_response(stored)
 check("生成预签名地址", bool(reference.get("url")), reference)
 check("返回 expires_at", bool(reference.get("expires_at")), reference)
@@ -334,25 +354,42 @@ finally:
         else:
             os.environ[k] = v
 
+# 下载链接有效期取 RESULT_EXPIRES，必须 ≤ 7 天（SigV4 / minio 客户端的硬限制）
 expect_fail(
     {
         "RESULT_TYPE": "AUTO",
-        "S3_ENDPOINT": "x:9000",
         "S3_BUCKET": "b",
-        "RESULT_EXPIRES": "100",
+        "RESULT_EXPIRES": "0",
         "FILE_EXPIRATION_SECONDS": "600",
-        "S3_PRESIGN_EXPIRES": "600",
     },
-    "S3_PRESIGN_EXPIRES must be less than FILE_EXPIRATION_SECONDS",
+    "RESULT_EXPIRES must be > 0",
 )
+# RESULT_EXPIRES 本身不设上限（它只管结果能查多久）；超 7 天时链接有效期自动封顶
+_long_envs = {
+    "RESULT_TYPE": "AUTO",
+    "S3_BUCKET": "b",
+    "RESULT_EXPIRES": str(30 * 24 * 60 * 60),
+    "FILE_EXPIRATION_SECONDS": str(60 * 24 * 60 * 60),
+}
+_saved_long = {k: os.environ.get(k) for k in _long_envs}
+os.environ.update(_long_envs)
+try:
+    run.check_result_storage_envs()
+    check("RESULT_EXPIRES 超 7 天仍可启动（链接自动封顶）", True)
+except Exception as error:  # noqa: BLE001
+    check("RESULT_EXPIRES 超 7 天仍可启动（链接自动封顶）", False, error)
+finally:
+    for _key, _value in _saved_long.items():
+        if _value is None:
+            os.environ.pop(_key, None)
+        else:
+            os.environ[_key] = _value
 expect_fail(
     {
         "RESULT_TYPE": "AUTO",
-        "S3_ENDPOINT": "x:9000",
         "S3_BUCKET": "b",
         "RESULT_EXPIRES": "100",
         "FILE_EXPIRATION_SECONDS": "600",
-        "S3_PRESIGN_EXPIRES": "60",
         "RESULT_TO_S3_TRIES": "0",
     },
     "RESULT_TO_S3_TRIES must be >= 1",
@@ -365,7 +402,6 @@ expect_fail({"RESULT_TYPE": "s3x"}, "RESULT_TYPE must be one of")
 expect_fail(
     {
         "RESULT_TYPE": "AUTO",
-        "S3_ENDPOINT": "x:9000",
         "S3_BUCKET": "b",
         "RESULT_TO_S3_TRIES": "abc",
     },
@@ -374,7 +410,6 @@ expect_fail(
 expect_fail(
     {
         "RESULT_TYPE": "AUTO",
-        "S3_ENDPOINT": "x:9000",
         "S3_BUCKET": "b",
         "RESULT_TO_S3_TRIES": "3",
         "S3_PORT": "70000",
@@ -384,42 +419,36 @@ expect_fail(
 expect_fail(
     {
         "RESULT_TYPE": "AUTO",
-        "S3_ENDPOINT": "x:9000",
         "S3_BUCKET": "b",
         "RESULT_TO_S3_TRIES": "3",
         "S3_PORT": "9000",
-        "S3_PRESIGN_EXPIRES": "0",
-    },
-    "S3_PRESIGN_EXPIRES must be > 0",
-)
-expect_fail(
-    {
-        "RESULT_TYPE": "AUTO",
-        "S3_ENDPOINT": "x:9000",
-        "S3_BUCKET": "b",
-        "RESULT_TO_S3_TRIES": "3",
-        "S3_PORT": "9000",
-        "S3_PRESIGN_EXPIRES": "60",
         "RESULT_AUTO_TO_S3_SIZE": "-1",
     },
     "RESULT_AUTO_TO_S3_SIZE must be >= 0",
 )
 
 # JSON 模式下 S3_* 不生效，不应因无关配置妨碍启动
+_saved_mode = {k: os.environ.get(k) for k in ("RESULT_TYPE", "S3_PORT")}
 os.environ.update({"RESULT_TYPE": "JSON", "S3_PORT": "not-a-port"})
 try:
     run.check_result_storage_envs()
     check("JSON 模式不校验 S3 相关配置", True)
 except Exception as error:  # noqa: BLE001
     check("JSON 模式不校验 S3 相关配置", False, error)
+finally:
+    # 端点现在完全由 S3_PORT 推导，这个非法值必须被清掉，否则后续用例连不上对象存储
+    for _key, _value in _saved_mode.items():
+        if _value is None:
+            os.environ.pop(_key, None)
+        else:
+            os.environ[_key] = _value
 
 section("9b. 对象存储地址/桶名的默认推导（内嵌场景开箱即用）")
 _origin = {
     key: os.environ.get(key)
-    for key in ("S3_ENDPOINT", "S3_BUCKET", "NODE_TYPE", "MASTER_HOST", "S3_PORT")
+    for key in ("S3_BUCKET", "NODE_TYPE", "MASTER_HOST", "S3_PORT")
 }
 
-os.environ.pop("S3_ENDPOINT", None)
 os.environ["S3_PORT"] = "9000"
 os.environ["NODE_TYPE"] = "single_node"
 check(
@@ -436,14 +465,12 @@ check(
     rs.get_s3_endpoint(),
 )
 
-os.environ["S3_ENDPOINT"] = "custom-endpoint:1234"
-check("显式配置优先", rs.get_s3_endpoint() == "custom-endpoint:1234", rs.get_s3_endpoint())
-
 os.environ["S3_BUCKET"] = "custom-bucket"
 check("桶名取自环境变量", rs.get_bucket() == "custom-bucket", rs.get_bucket())
 
 sample_key = "demo/key.json"
-os.environ["S3_ENDPOINT"] = S3_ENDPOINT  # 明确回到测试端点
+# 签名按服务端看到的内部地址计算：这里回到 API 节点视角（单机 → 本机对象存储）
+os.environ["NODE_TYPE"] = "single_node"
 signed_url = rs.get_s3_client().presigned_get_object(
     rs.get_bucket(), sample_key, expires=timedelta(seconds=60)
 )
@@ -463,13 +490,13 @@ for key, value in _origin.items():
 section("10. bucket 自检与过期对象清理")
 os.environ["RESULT_TYPE"] = "AUTO"
 os.environ["RESULT_AUTO_TO_S3_SIZE"] = "1"
-os.environ["S3_PREFIX"] = "cleanup-selftest"
 os.environ["S3_BUCKET"] = S3_BUCKET
+os.environ["NODE_TYPE"] = "single_node"
 
 client = rs.get_s3_client()
 rs.ensure_bucket()
-# 清掉上次运行可能残留的对象，保证断言可重复
-for _obj in client.list_objects(S3_BUCKET, prefix="cleanup-selftest", recursive=True):
+# 清掉上次运行可能残留的对象，保证断言可重复（bucket 是测试专用）
+for _obj in client.list_objects(S3_BUCKET, recursive=True):
     client.remove_object(S3_BUCKET, _obj.object_name)
 check("ensure_bucket 幂等（bucket 存在）", client.bucket_exists(S3_BUCKET))
 rs.ensure_bucket()
@@ -483,9 +510,7 @@ check("待清理对象已上传", len(keys) == 3, keys)
 
 removed = rs.cleanup_expired_objects(0)
 check("过期对象全部清理", removed == 3, removed)
-remaining = list(
-    client.list_objects(S3_BUCKET, prefix="cleanup-selftest", recursive=True)
-)
+remaining = list(client.list_objects(S3_BUCKET, recursive=True))
 check("清理后无残留", remaining == [], remaining)
 
 rs.finalize_task_result({"n": 9}, "cleanup-obj-keep")

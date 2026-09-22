@@ -4,7 +4,7 @@
 --------
 - **对外只暴露一个端口**：客户端拿到的是相对路径（``/<bucket>/<key>?X-Amz-...``），
   拼上自己访问 FastTask 的地址即可下载，不需要给对象存储单独开端口。
-- **Host 必须重写**：预签名地址是以服务端内部的 ``S3_ENDPOINT``
+- **Host 必须重写**：预签名地址是以服务端内部的对象存储地址
   （如 ``127.0.0.1:9000``）作为 Host 计算的，而客户端用的是自己的地址。
   这里转发时统一把 Host 换回内部地址，否则 SigV4 校验必然失败
   （403 SignatureDoesNotMatch）。
@@ -51,7 +51,7 @@ class S3ProxyMiddleware:
     ):
         self.app = app
         self.prefix = f"/{bucket}/"
-        # 转发目标与 Host 重写值取同一个地址（即 S3_ENDPOINT）：
+        # 转发目标与 Host 重写值取同一个地址（即内部对象存储地址）：
         # 预签名就是按它计算的 Host，两者必须一致。
         self.target = f"http://{endpoint}"
         self.upstream_host = endpoint

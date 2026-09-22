@@ -142,8 +142,8 @@ FastTask 提供以下核心功能：
         restart: always
 
         ports:
-          - "9001:443"   # API 端口
-          - "9000:6379"   # Redis 端口（供 Worker 连接）
+          - "9001:443"    # API 端口（客户端访问）
+          - "9000:6379"   # 宿主 9000 → 容器 6379（Redis，供 Worker 连接）
 
         volumes:
           - ./files:/fasttask/files
@@ -152,11 +152,17 @@ FastTask 提供以下核心功能：
           - NODE_TYPE=distributed_master
           - TASK_QUEUE_PASSWD=passwd
           - FLOWER_ENABLED=True
+          - RESULT_TYPE=AUTO        # 启用结果外置（详见「内嵌对象存储」）
     ```
 
     - 6379 为 Redis 任务队列端口，其他 Worker 需要连接到该端口
+    - 443 为 API 端口（客户端访问）；容器内的 9000 是**对象存储端口**（`S3_PORT`），
+      Worker 上传结果时会直连 `master:9000`：同一容器网络内无需任何配置（用服务名访问即可），
+      跨主机部署时需要在**内网**放通该端口（不需要映射到外部）
     - `NODE_TYPE` 需要设置为 `distributed_master`，表示该节点为分布式 master 节点
-    - `TASK_QUEUE_PASSWD` 为 Redis 密码，其他 Worker 需要使用相同密码连接
+    - `TASK_QUEUE_PASSWD` 为 Redis 密码，其他 Worker 需要使用相同密码连接；**它同时是 S3 凭据的派生来源**，
+      所以 master 与所有 Worker 必须用同一个值，否则 Worker 上传会被对象存储拒绘（SignatureDoesNotMatch）
+    - `RESULT_TYPE` 启用结果外置时必填（`S3` 或 `AUTO`），并且**必须与所有 Worker 保持一致**
 
 - **worker 节点**：只执行任务，不提供 API 服务
 
@@ -178,6 +184,7 @@ FastTask 提供以下核心功能：
           - ENABLED_TASKS=get_hypotenuse
           - WORKER_TAG=get_hypotenuse
           - FLOWER_ENABLED=True
+          - RESULT_TYPE=AUTO        # 必须与 master 相同
     ```
 
     - `NODE_TYPE`：需要设置为 `distributed_worker`
@@ -186,7 +193,9 @@ FastTask 提供以下核心功能：
     - `TASK_QUEUE_PASSWD`：master 节点的任务队列密码
     - `ENABLED_TASKS` / `DISABLED_TASKS`：控制该 Worker 只执行或排除特定任务
     - `WORKER_TAG`：Worker 标识标签，用于区分不同 Worker
-    - Worker 节点不需要暴露端口（仅连接 Master 的 Redis）
+    - `RESULT_TYPE`：启用结果外置时必须与 master 相同（`S3` 或 `AUTO`），否则同一批任务的结果形态会不一致
+    - Worker 节点不需要暴露端口，但需要能访问 master 的 `6379`（任务队列）与 `9000`（上传结果对象，`S3_PORT`）：
+      同一容器网络内零配置，跨主机部署时需在内网放通这两个端口
 
 ## Worker 标识与任务路由
 
@@ -345,7 +354,8 @@ FastTask 内建文件自动过期删除机制，由 Supervisor 管理的独立�
 - **RESULT_AUTO_TO_S3_SIZE**：`AUTO` 模式的阈值（字节），默认 `1048576`（1MB）
 - **RESULT_TO_S3_TRIES**：结果上传对象存储的重试次数，默认 `3`；重试后仍失败则该任务失败
 
-对象存储是**模块内置**的，不需要额外部署、不需要暴露额外端口、也不需要配置任何连接信息：
+对象存储是**模块内置**的，不需要额外部署、也不需要配置任何连接信息；对**客户端**不暴露额外端口
+（集群内部的端口要求见下方「内嵌对象存储」）：
 
 ```yaml
 environment:
@@ -359,14 +369,51 @@ environment:
 - 仅在提供 API 的节点（`single_node` / `distributed_master`）启动，worker 只作为客户端连过来
 - 数据存放在 `files/fasttask/s3/`（已挂载的 `files` 卷内，不需要额外卷）
 - 凭据由 `TASK_QUEUE_PASSWD` 派生，master 与所有 worker 自动一致，无需配置
-- **通过 API 端口的路径代理对外提供**：客户端用访问 FastTask 的同一个地址即可下载结果，
-  所以部署时只需要映射 API 端口（`9001:443`），不必给对象存储单独开端口
+- **客户端下载通过 API 端口的路径代理对外提供**：下载地址是相对路径（`/{bucket}/...`），
+  客户端用访问 FastTask 的同一个地址即可，所以**对外**只需映射 API 端口（`9001:443`），
+  不必把对象存储端口暴露到外部
+- **集群内部仍需可达对象存储端口**：worker 会把结果直接 `PUT` 到 `{MASTER_HOST}:{S3_PORT}`
+  （同一容器网络内零配置，跨主机部署时要在内网放通 master 的 `S3_PORT`，默认 9000）
+- 对象存储地址由代码按节点类型推导（`single_node` / `distributed_master` → `127.0.0.1:{S3_PORT}`，
+  `distributed_worker` → `{MASTER_HOST}:{S3_PORT}`），没有对应环境变量，也不支持指向外部对象存储
 - master 启动时会自检并自动创建 bucket，配置错误在启动阶段就暴露
 - 过期对象由清理进程按 `FILE_EXPIRATION_SECONDS` 删除（需 `FILE_CLEANUP_ENABLED=True`，且仅 `single_node` / `distributed_master`）
 
+#### 启用 `S3` / `AUTO` 时，各节点与 compose 需要增加什么
+
+| 节点 | 额外进程 | 端口 | 必须能访问 | 必须配置 |
+|---|---|---|---|---|
+| `single_node` | versitygw（`S3_PORT`，默认 9000） | 对外只需 API 端口（`9001:443`），9000 不必映射 | `127.0.0.1:9000` | `RESULT_TYPE=S3` 或 `AUTO` |
+| `distributed_master` | versitygw + 过期对象清理 | 对外 API 端口；**对 Worker** 放通 `6379`（队列）与 `9000`（对象存储） | `127.0.0.1:9000` | 同左，且与所有 Worker 一致 |
+| `distributed_worker` | 无（不起 versitygw） | 无需暴露 | master 的 `6379`（队列）与 `9000`（上传结果） | `NODE_TYPE` / `MASTER_HOST` / `TASK_QUEUE_PORT` / `TASK_QUEUE_PASSWD` / `RESULT_TYPE`（与 master 相同） |
+
+compose 实际只需要加环境变量（端口保持内部，无需映射）：
+
+```yaml
+# master / single_node
+environment:
+  - RESULT_TYPE=AUTO              # 唯一需要的开关（S3 / AUTO）
+
+# worker：结果模式必须与 master 相同，凭据来源也必须相同
+environment:
+  - NODE_TYPE=distributed_worker
+  - MASTER_HOST=master
+  - TASK_QUEUE_PORT=6379
+  - TASK_QUEUE_PASSWD=passwd      # S3 凭据由它派生，master 与 worker 必须一致
+  - RESULT_TYPE=AUTO
+```
+
+- **同一 compose 网络**：不需要给对象存储做端口映射，Worker 用服务名访问 `master:9000` 即可；
+  compose 里除了环境变量与 `files` 卷，不需要新增任何配置
+- **跨主机部署**：在**内网**放通 master 的 `6379` 与 `9000`；`9000` 只给 Worker 用，不必对外
+- `files` 卷必须挂载（对象存储数据落在 master / single 的 `files/fasttask/s3/`，跟随 `files` 卷一起持久化），
+  Worker **不需要**共享该目录
+- 只有 `single_node` / `distributed_master` 会启动 versitygw；Worker 上不会（它只作为客户端连过来）
+
 启动会做前置校验：`FILE_EXPIRATION_SECONDS` 必须大于 `RESULT_EXPIRES`（结果引用不能比可清理的文件活得更久，
-否则 result_id 还没过期、配套的中间文件已被清掉，排查时无据可查）；当 `RESULT_TYPE` 为 `S3`/`AUTO` 时，
-额外要求 `S3_PRESIGN_EXPIRES` 也小于 `FILE_EXPIRATION_SECONDS`，避免出现“下载地址有效但对象已被清理”的悬空引用。
+否则 result_id 还没过期、配套的中间文件已被清掉，排查时无据可查）。预签名下载地址的有效期取
+`min(RESULT_EXPIRES, 7 天)`——上限 7 天是 SigV4 的硬限制，所以 `RESULT_EXPIRES` 本身不受限（它只管
+结果能查多久）；由于封顶后仍然不超过 `RESULT_EXPIRES`，上面那条约束同时保证了“下载地址不会比对象活得更久”。
 
 `/run` 与 MCP 的 `run_*` 也会遵循这套规则：小结果直接内联，超过阈值就外置并返回引用，
 避免把几十上百 KB 的原始响应堆进调用方上下文。未开外置（`RESULT_TYPE=JSON`）时
