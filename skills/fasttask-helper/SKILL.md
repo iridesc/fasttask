@@ -1,15 +1,19 @@
 ---
 name: fasttask-helper
 description: >
-  FastTask 平台助手，覆盖两类工作，按场景自动选择功能组：
+  FastTask 平台助手，覆盖三类工作，按场景自动选择功能组：
   (1) 封装构建新服务：将任意 CLI 工具封装为 FastTask HTTPS API 异步服务（项目骨架、任务模块、
   Docker、部署、认证）；
   (2) 管理已部署实例上的任务：查看实例/worker/任务统计、查询任务结果（含外置结果 result_type=s3
-  的下载与解析）、撤销（revoke）running/卡住/误下发的任务、批量终止一组 result_id。
+  的下载与解析）、撤销（revoke）running/卡住/误下发的任务、批量终止一组 result_id；
+  (3) 给存量项目补 MCP 元信息：给任务模块加 docstring、给 Params/Result 字段加 Field(description=...)、
+  重写 setting.py 的 title/summary/description，让 MCP 工具能正确向 AI 说明这个服务是干什么的。
   触发关键词：fasttask 封装/做成 API/创建 fasttask 项目/把 XX 工具做成服务/部署新模块/
   撤销任务/revoke/任务一直 running 卡住想停掉/查任务状态/看实例上有哪些任务/status_info/
-  结果下载不了/result.url/result_type=s3/接口 404（没开还是地址错）/管理某 fasttask 实例任务。
-  即使用户只模糊提到"调一下接口看看""撤销掉这批任务""结果拿不到"也应触发本技能。
+  结果下载不了/result.url/result_type=s3/接口 404（没开还是地址错）/管理某 fasttask 实例任务/
+  给任务加注释或 docstring/补项目描述/setting.py 补充说明/AI 不知道这服务是干什么的/
+  AI 选错工具或参数填错/MCP 工具描述不对/旧项目接入 MCP。
+  即使用户只模糊提到"调一下接口看看""撤销掉这批任务""结果拿不到""把描述补一下"也应触发本技能。
 ---
 
 # FastTask Helper
@@ -18,16 +22,26 @@ FastTask 平台（Celery + Redis + FastAPI + Uvicorn）的封装与运维助手�
 
 ## 先选功能组
 
-本技能拆成两个独立功能组，**根据用户意图选择对应的参考文档**，不要只依赖本文件：
+本技能拆成三个独立功能组，**根据用户意图选择对应的参考文档**，不要只依赖本文件：
 
 | 用户想要… | 功能组 | 去读 |
 |---|---|---|
 | 把 CLI 工具封装成 HTTPS API、新建 fasttask 项目/模块、打包部署 | ① 封装构建新服务 | [references/build-new-service.md](references/build-new-service.md) |
 | 管理已运行的 fasttask 实例：查状态/结果、撤销任务、批量终止 | ② 管理存在的实例任务 | [references/manage-instances.md](references/manage-instances.md) |
+| 给**已有的**项目补描述（任务 docstring / `setting.py`），让 AI 看得懂 | ③ 补齐 MCP 元信息 | [references/retrofit-project-metadata.md](references/retrofit-project-metadata.md) |
 
-两个功能组都完整独立成文，各自含操作步骤、代码模板与排查项。先读对应文档再动手。
+三个功能组都完整独立成文，各自含操作步骤、代码模板与排查项。先读对应文档再动手。
 
-## 公共基础知识（两功能组通用）
+## 自带脚本（都无需项目运行环境，直接在宿主机上跑）
+
+| 脚本 | 作用 |
+|---|---|
+| [scripts/audit_mcp_metadata.py](scripts/audit_mcp_metadata.py) | 盘点某个项目还缺哪些描述：setting 四字段、任务 docstring、字段 `description`。纯 AST，不 import 项目代码 |
+| [scripts/preview_mcp_descriptions.py](scripts/preview_mcp_descriptions.py) | 打印 AI **实际会看到**的 MCP `instructions` 与工具描述（用线上同一套代码），并提醒「缺 docstring / 调用规则被挤出可见窗口」 |
+
+功能组 ③ 全靠这两个脚本盘点与验收；功能组 ① 写完第一个任务后也建议用 preview 看一眼效果。
+
+## 公共基础知识（三个功能组通用）
 
 - **FastTask 是什么**：分布式异步任务平台。开发者定义 `tasks/*.py`（文件名=函数名，含
   `Params`/`Result` Pydantic 模型），打包 Docker 镜像部署，暴露带权限控制的 HTTPS 异步接口。
