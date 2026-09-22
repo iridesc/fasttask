@@ -219,7 +219,7 @@ if get_bool_env("API_STATUS_INFO"):
     ):
         task_infos = (
             await load_redis_task_infos(LOADED_TASKS)
-            if "task_infos" in params.fields
+            if "task_info" in params.fields
             else dict()
         ).values()
         worker_status = (

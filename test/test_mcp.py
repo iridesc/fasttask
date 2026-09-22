@@ -394,7 +394,51 @@ try:
                 )
                 check("tag 透传", checked["result"].get("tag") == "mcp", checked["result"])
 
-                section("8. 大结果：返回 s3 引用而非内容")
+                section("8. /status_info：fields=[task_info] 真的带回任务统计")
+                status_resp = httpx.post(
+                    f"{API_BASE}/status_info",
+                    json={"fields": ["task_info"]},
+                    headers={"Authorization": AUTH_HEADER},
+                    timeout=10,
+                )
+                check(
+                    "status_info 返回 200",
+                    status_resp.status_code == 200,
+                    status_resp.text[:200],
+                )
+                status_body = status_resp.json()
+                probe_stats = status_body.get("task_info_mcp_probe", {})
+                print(
+                    "  task_info_mcp_probe="
+                    f"{json.dumps(probe_stats, ensure_ascii=False)[:200]}"
+                )
+                # 回归点：曾经字段名拼成 task_infos，导致这里永远是全 0 空壳
+                check(
+                    "task_info_{task} 带回真实统计（非空壳）",
+                    probe_stats.get("status_to_amount", {}).get("SUCCESS", 0) >= 1,
+                    probe_stats,
+                )
+                check(
+                    "task_info_total 同样带回统计",
+                    status_body.get("task_info_total", {})
+                    .get("status_to_amount", {})
+                    .get("SUCCESS", 0)
+                    >= 1,
+                    status_body.get("task_info_total"),
+                )
+                bad_field = httpx.post(
+                    f"{API_BASE}/status_info",
+                    json={"fields": ["task_infos"]},
+                    headers={"Authorization": AUTH_HEADER},
+                    timeout=10,
+                )
+                check(
+                    "拼错的 task_infos 仍被 schema 拒绝（422）",
+                    bad_field.status_code == 422,
+                    bad_field.status_code,
+                )
+
+                section("9. 大结果：返回 s3 引用而非内容")
                 _, created = await call("create_mcp_probe", {"size": 20000, "tag": "big"})
                 big = await wait_task(created["result_id"])
                 raw_text_len = len(json.dumps(big, ensure_ascii=False))
@@ -431,7 +475,7 @@ try:
                 except Exception as error:  # noqa: BLE001
                     check("预签名地址可裸下载", False, repr(error))
 
-                section("9. run 同步执行与截断保护")
+                section("10. run 同步执行与截断保护")
                 _, run_small = await call("run_mcp_probe", {"size": 8, "tag": "sync"})
                 check("同步执行成功", run_small["state"] == "SUCCESS", run_small)
                 check(
@@ -466,7 +510,7 @@ try:
                     len(json.dumps(run_big, ensure_ascii=False)),
                 )
 
-                section("10. 全局工具")
+                section("11. 全局工具")
                 _, status = await call("fasttask_status")
                 check("status 返回 running_id", "running_id" in status, status.keys())
                 check("status 含队列积压", "pending_task_count" in status, status.keys())
