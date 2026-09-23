@@ -1,6 +1,13 @@
 fastapi
 uvicorn[standard]
-celery
+
+# Celery 三件套。版本区间是有意的，别急着放开：
+# billiard 必须留在 4.2.x —— 4.3.0 起会让「优雅关机时正在运行的任务」被 ack 丢弃（重启后永不重跑）。
+# 原因、复现过程与验证方式见 readme「关机与重启」一节。
+billiard>=4.2.4,<4.3
+celery>=5.6.3,<5.7
+kombu>=5.6.2,<5.7
+
 redis
 gevent
 python-multipart

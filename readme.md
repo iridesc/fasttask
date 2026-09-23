@@ -334,13 +334,40 @@ FastTask 内建文件自动过期删除机制，由 Supervisor 管理的独立�
 
 - **SOFT_TIME_LIMIT**：运行时间限制，单位秒，默认为 1 天（86400 秒），超过该时间任务进程会被直接杀死，任务状态变为失败
 - **TIME_LIMIT**：硬超时时间，单位秒，默认为 `SOFT_TIME_LIMIT + 60` 秒，任务达到此时间会被强制终止
-- **VISIBILITY_TIMEOUT**：Celery broker 可见性超时，单位秒，默认为 `TIME_LIMIT + 60` 秒，任务在此时间内未被处理会重新入队
+- **VISIBILITY_TIMEOUT**：Celery broker 可见性超时，单位秒，默认为 `TIME_LIMIT + 60` 秒。**语义是「消息未被确认」而不是「未被处理」**：任务执行期间消息一直处于未确认状态（`task_acks_late=True`），所以它实际决定的是「worker 进程被强杀后，任务最多要等多久才会被重新投递」。默认约 24 小时；优雅关机不需要等这么久，见下面的「关机与重启」
 - **RESULT_EXPIRES**：结果过期时间，单位秒，默认为 3 天（259200 秒），超过该时间任务结果会被删除
 - **WORKER_CONCURRENCY**：Worker 并发数，默认为 CPU 核数
 - **WORKER_POOL**：Worker 池类型，默认为 `prefork`，可选 `gevent`
 - **WORKER_TAG**：Worker 标识标签，用于区分不同 Worker，默认 `"worker"`
 - **ENABLED_TASKS**：逗号分隔的任务名称列表（例如 `get_circle_area,get_hypotenuse`）。如果设置，此 Worker 只会处理这些指定的任务。优先级高于 `DISABLED_TASKS`
 - **DISABLED_TASKS**：逗号分隔的任务名称列表。如果设置，此 Worker 将不处理这些指定的任务
+
+### 关机与重启
+
+任务消息是 **at-least-once** 语义：worker 只有在任务执行完成、结果写入之后才确认消息（`task_acks_late=True`）。所以异常停机不会静默吞掉任务，但**任务可能被重复执行**，任务实现需要幂等。
+
+不同停机方式的行为差别很大：
+
+| 停机方式 | 正在运行的任务 | 节点恢复后 |
+| --- | --- | --- |
+| 优雅关机（`docker compose down`、宿主机 systemd 关机、`podman stop`） | 立即中止，未确认的消息**放回队列** | **立刻重跑** |
+| 断电、`docker kill -s KILL`、宿主机崩溃 | 消息留在未确认区（unacked） | 等 `VISIBILITY_TIMEOUT`（默认约 24 小时）才重投 |
+
+优雅关机依赖两处配置（均在 `supervisord_template_conf/celery.conf`）：
+
+- **`stopsignal=QUIT`**：让 Celery 走**冷关机**。收到 SIGQUIT 时 Celery 会立即中止运行中的任务并把未确认的消息放回队列；默认的 SIGTERM 走 warm shutdown，只会无意义地等任务跑完，最终仍被外层强杀、消息留在 unacked。
+- **`stopwaitsecs=8`**：supervisord 的兜底超时，必须**小于**容器停止超时（docker/podman 默认 10 秒）。否则外层 SIGKILL 先到，requeue 和 redis 的优雅落盘都会被打断。
+
+还有一个必须同时满足的前提：**billiard 必须留在 4.2.x**（见 `requirements.txt`）。billiard 4.3.0 起，worker 子进程收到 SIGTERM 时会把 `SystemExit` 当作「任务结果」上报给主进程；而 Celery 5.6.3 只对 `Terminated` / `WorkerLostError` 做特殊处理，`SystemExit` 会落到兜底分支被 `acknowledge()` —— 结果是**任务被 ack 丢弃、重启后永不重跑**（实测复现：Redis 上只看到 `ZREM unacked_index` + `HDEL unacked`，没有 `RPUSH`）。4.2.1~4.2.4 的行为则是：子进程被 SIGTERM 直接终止，主进程拿到 `Terminated`，Celery 因为该任务已被 cancel（`_already_cancelled`）而**不做 ack**，消息留在未确认区，等连接关闭时由 Kombu 放回队列（`RPUSH`，消息带 `redelivered: true`）。
+
+另外两条**相互独立**的重投路径（不要和上面的关机路径混为一谈）：
+
+- **worker 进程意外死亡**（OOM kill、SIGKILL、崩溃）：主进程拿到的是 `WorkerLostError`，此时由 `task_reject_on_worker_lost`（本项目为 `True`）决定是否重投，而「多久判定为丢失」由 `worker_lost_wait`（`celery_app.py`，默认 10 秒）控制。
+- **断电 / SIGKILL**：没有任何信号处理的机会，只能靠 `VISIBILITY_TIMEOUT` 兜底。
+
+验证优雅关机是否生效：celery 日志里应出现 `Restoring N unacknowledged message(s)`，且节点重启后任务会重新执行（`result_id` 不变，客户端仍可用原 id 查询）。没有这行就说明 requeue 没生效。
+
+`VISIBILITY_TIMEOUT` 是最后一层兜底，它决定最坏情况下任务要「躺」多久。需要更短的恢复时间时调小 `SOFT_TIME_LIMIT`（`VISIBILITY_TIMEOUT` 默认跟着它走），注意它必须大于 `TIME_LIMIT`。
 
 ## 结果存储
 
