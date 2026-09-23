@@ -55,7 +55,13 @@ app.conf.update(
         "accept_content": ["json"],
         "worker_prefetch_multiplier": 1,
         "task_reject_on_worker_lost": True,
-        "worker_terminate_timeout": 5,
+        # 子进程「疑似丢失」（OOM / SIGKILL / 崩溃）时的判定宽限期：billiard 检测到 worker 失联后
+        # 会先等这么久（billiard/pool.py: "we have no way to accurately tell if it did"），
+        # 确认它真回不来了再把任务标记为 WorkerLostError。与上一行是一对：
+        # 前者决定「多久判定丢失」，后者决定「判定后把消息放回队列而不是 ack 丢弃」。
+        # 注意异常类型不是 WorkerLostError 时这条链路不会走到（例如 billiard >= 4.3.0 会把
+        # 子进程的 SystemExit 当作任务结果上报，见 requirements.txt）。
+        "worker_lost_wait": 10.0,
         "broker_transport_options": {
             "visibility_timeout": int(os.environ["VISIBILITY_TIMEOUT"]),
             # Redis 连接建立超时 (秒)
