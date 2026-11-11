@@ -10,8 +10,8 @@ services:
     ports:
       # 在single_node 与 distributed_master 需要映射api端口 
       - "9001:443"
-      # 在distributed_master需要映射任务队列端口
-      - "9000:6379"
+      # 在distributed_master需要映射任务队列端口（仅绑本机；跨主机部署去掉 127.0.0.1 并把口令改成强口令）
+      - "127.0.0.1:9000:6379"
       # webtop  related
       - 3000:3001
 

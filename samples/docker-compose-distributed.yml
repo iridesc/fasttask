@@ -6,7 +6,10 @@ services:
 
     ports:
       - "9001:443"
-      - "9000:6379"
+      # 任务队列端口仅绑本机：同 compose 内的 worker 走容器网络（master:6379）即可，
+      # 只有宿主机上手工连 Redis 时才需要这个映射。
+      # 跨主机部署需去掉 127.0.0.1 绑定并同时把 TASK_QUEUE_PASSWD 改成强口令。
+      - "127.0.0.1:9000:6379"
 
     volumes:
       - ./files:/fasttask/files
