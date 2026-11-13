@@ -1,14 +1,32 @@
 name: Docker Image CI/CD
 
+# 触发条件：
+#   push main / PR main  →  自动构建
+#   workflow_dispatch     →  手动重打（改 Dockerfile 或依赖版本后用得上）
 on:
   push:
     branches: [ "main" ]
   pull_request:
     branches: [ "main" ]
+  workflow_dispatch:
+
+# 同一分支的旧构建自动取消，避免连续 push 时排队堆积
+concurrency:
+  group: docker-build-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  REGISTRY: docker.io
+  IMAGE: irid/fasttask
 
 jobs:
-  build-and-push:
+  # ---------------------------------------------------------------------
+  # 标准包：fasttask/Dockerfile（python:slim 基础）
+  # ---------------------------------------------------------------------
+  build-standard:
+    name: 标准包
     runs-on: ubuntu-latest
+    timeout-minutes: 60
 
     steps:
     - name: Checkout code
@@ -25,13 +43,77 @@ jobs:
     - name: Set up Docker Buildx
       uses: docker/setup-buildx-action@v3
 
-    # 3. 构建并推送镜像
-    - name: Build and push Docker image
+    # 3. 计算镜像 tag
+    #    - latest / test：滚动标签，samples/ 里的 compose 默认引用的就是 test
+    #    - <sha>：与 commit 一一对应，可追溯、可回滚
+    #    PR 时不加 latest/test：避免 PR 把正式标签覆盖掉
+    - name: Docker metadata (standard)
+      id: meta-standard
+      uses: docker/metadata-action@v5
+      with:
+        images: ${{ env.REGISTRY }}/${{ env.IMAGE }}
+        tags: |
+          type=raw,value=latest,enable=${{ github.event_name != 'pull_request' }}
+          type=raw,value=test,enable=${{ github.event_name != 'pull_request' }}
+          type=sha,format=long
+
+    # 4. 构建并推送镜像
+    - name: Build and push Docker image (standard)
       uses: docker/build-push-action@v5
       with:
         context: .
         file: ./Dockerfile
-        push: true
+        platforms: linux/amd64
+        push: ${{ github.event_name != 'pull_request' }}
+        tags: ${{ steps.meta-standard.outputs.tags }}
+        labels: ${{ steps.meta-standard.outputs.labels }}
+        # 复用 Actions 缓存，二次构建能省掉大部分 pip/apt 层
+        cache-from: type=gha,scope=standard
+        cache-to: type=gha,mode=max,scope=standard
+
+  # ---------------------------------------------------------------------
+  # 桌面包：fasttask/Dockerfile.desktop（webtop + xfce 基础）
+  # 体积远大于标准包（3GB+），构建慢，因此独立成 job：
+  # 标准包失败不影响桌面包，反之亦然。
+  # ---------------------------------------------------------------------
+  build-desktop:
+    name: 桌面包
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Log in to Docker Hub
+      uses: docker/login-action@v3
+      with:
+        username: ${{ secrets.DOCKER_USERNAME }}
+        password: ${{ secrets.DOCKER_PASSWORD }}
+
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+
+    # tags：desktop-latest / desktop-test 与标准包的 latest / test 对应，
+    # desktop-<sha> 用于追溯具体 commit
+    - name: Docker metadata (desktop)
+      id: meta-desktop
+      uses: docker/metadata-action@v5
+      with:
+        images: ${{ env.REGISTRY }}/${{ env.IMAGE }}
         tags: |
-          docker.io/irid/fasttask:latest
-          docker.io/irid/fasttask:${{ github.sha }}
+          type=raw,value=desktop-latest,enable=${{ github.event_name != 'pull_request' }}
+          type=raw,value=desktop-test,enable=${{ github.event_name != 'pull_request' }}
+          type=raw,value=desktop-${{ github.sha }}
+
+    - name: Build and push Docker image (desktop)
+      uses: docker/build-push-action@v5
+      with:
+        context: .
+        file: ./Dockerfile.desktop
+        platforms: linux/amd64
+        push: ${{ github.event_name != 'pull_request' }}
+        tags: ${{ steps.meta-desktop.outputs.tags }}
+        labels: ${{ steps.meta-desktop.outputs.labels }}
+        cache-from: type=gha,scope=desktop
+        cache-to: type=gha,mode=max,scope=desktop
