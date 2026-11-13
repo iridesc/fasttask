@@ -4,6 +4,11 @@ services:
     container_name: fasttask-desktop
     restart: always
 
+    # 优雅停机等待时间，必须大于容器内 supervisord 各程序 stopwaitsecs 之和
+    # （celery 8s + redis 10s ≈ 18s），取 60s 留足冗余。docker 默认只有 10s，
+    # 会 SIGKILL 掉容器导致队列数据丢失（详见 readme「Redis 持久化与迁移」）。
+    stop_grace_period: 60s
+
     security_opt:
       - seccomp:unconfined
 

@@ -161,6 +161,16 @@ fasttask/
 - `db=1`：Celery broker（任务队列）
 - `db=2`：Celery backend（任务结果）
 
+### Redis 持久化与停机顺序
+
+Redis 存着任务队列、任务结果、并发锁，停机丢数据 = 任务静默消失。
+
+- **持久化用 AOF**：`supervisord_template_conf/redis.conf` 里 `redis-server ... --appendonly yes --appendfsync everysec --save ""`。`--save ""` 不可省：Redis 收到 SIGTERM 时会「先 fsync AOF、再同步写一份 RDB 快照」，保留 save 规则会让这一步阻塞几十秒，被容器停止超时 SIGKILL 截断 → 队列数据丢失。关掉后关机只需一次 fsync（实测 0.6s）。AOF 的 base 文件本身就是 RDB 格式，备份能力不受影响，磁盘占用也不翻倍。
+- **停止顺序**：supervisord 按 `priority` 降序停止。`celery` 固定为 **999**（先停，在 Redis 还活着时完成 requeue），`redis` 为 **100**（后停，收下 requeue 并 fsync 进 AOF）。**不要改小 celery 的 priority**，否则 requeue 会静默失效。
+- **三层超时**：`compose stop_grace_period`（样例统一 60s，docker 默认只有 10s） > `supervisord stopwaitsecs`（celery 8s、redis 10s） > Redis 实际关闭耗时（~0.6s）。
+- **分布式部署**：worker 停止时把任务 requeue 回 master 的 Redis，所以 master 必须晚停。compose 里用 `depends_on` 表达（停止时按依赖逆序）。
+- **升级迁移**：开启 AOF 后 Redis 只读 AOF、不再读 `dump.rdb`。从旧版升级**不能直接改配置重启**（会读到空 AOF，3008 个 key 全丢），必须先在运行中的实例执行 `CONFIG SET appendonly yes`，等 `aof_last_bgrewrite_status:ok` 后再重启。详见 readme「Redis 持久化与迁移」。
+
 ### 任务编写规范
 
 1. 文件名与函数名必须一致

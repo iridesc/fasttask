@@ -4,6 +4,11 @@ services:
     container_name: fasttask-master
     restart: always
 
+    # 优雅停机等待时间，必须大于容器内 supervisord 各程序 stopwaitsecs 之和
+    # （celery 8s + redis 10s ≈ 18s），取 60s 留足冗余。docker 默认只有 10s，
+    # 会 SIGKILL 掉容器导致队列数据丢失（详见 readme「Redis 持久化与迁移」）。
+    stop_grace_period: 60s
+
     ports:
       - "9001:443"
       # 任务队列端口仅绑本机：同 compose 内的 worker 走容器网络（master:6379）即可，
@@ -27,6 +32,16 @@ services:
     container_name: fasttask-worker-get_circle_area
     restart: always
 
+    # 优雅停机等待时间，必须大于容器内 supervisord 各程序 stopwaitsecs 之和
+    # （celery 8s ≈ 8s），取 60s 留足冗余。
+    stop_grace_period: 60s
+
+    # depends_on 只影响启动顺序（master 先起），但 compose 停止时按依赖**逆序**：
+    # worker 先停、master 后停。这正是 requeue 需要的顺序 —— worker 停止时要把未确认的
+    # 任务放回 master 的队列，此时 master 的 redis 必须还活着。
+    depends_on:
+      - master
+
     volumes:
       - ./files-worker_1:/fasttask/files
 
@@ -45,6 +60,14 @@ services:
     image: docker.io/irid/fasttask:test
     container_name: fasttask-worker-get_hypotenuse
     restart: always
+
+    # 优雅停机等待时间，必须大于容器内 supervisord 各程序 stopwaitsecs 之和
+    # （celery 8s ≈ 8s），取 60s 留足冗余。
+    stop_grace_period: 60s
+
+    # 同上：保证停止时 worker 先于 master，requeue 时 master 的 redis 还活着。
+    depends_on:
+      - master
 
     volumes:
       - ./files-worker_2:/fasttask/files

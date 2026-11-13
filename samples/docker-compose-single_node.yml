@@ -4,6 +4,12 @@ services:
     container_name: fasttask
     restart: always
 
+    # 优雅停机等待时间。必须大于 supervisord 内部各程序的 stopwaitsecs 之和：
+    # celery 的 8s（冷关机 + requeue）+ redis 的 10s（fsync AOF）≈ 18s，
+    # 取 60s 留足冗余。docker 默认只有 10s，会在 redis 收尾前 SIGKILL 掉整个容器，
+    # 导致队列数据丢失（详见 readme「Redis 持久化与迁移」）。
+    stop_grace_period: 60s
+
     ports:
       # 映射api端口 
       - "9001:443"

@@ -4,6 +4,11 @@ services:
     container_name: fasttask-desktop-master
     restart: always
 
+    # 优雅停机等待时间，必须大于容器内 supervisord 各程序 stopwaitsecs 之和
+    # （celery 8s + redis 10s ≈ 18s），取 60s 留足冗余。docker 默认只有 10s，
+    # 会 SIGKILL 掉容器导致队列数据丢失（详见 readme「Redis 持久化与迁移」）。
+    stop_grace_period: 60s
+
     security_opt:
       - seccomp:unconfined
 
@@ -36,6 +41,14 @@ services:
     container_name: fasttask-desktop-worker-get_circle_area
     restart: always
 
+    # 优雅停机等待时间，取 60s 留足冗余。
+    stop_grace_period: 60s
+
+    # 保证停止时 worker 先于 master：worker 停止时要把未确认的任务 requeue 回
+    # master 的队列，此时 master 的 redis 必须还活着。
+    depends_on:
+      - fasttask-desktop-master
+
     security_opt:
       - seccomp:unconfined
 
@@ -67,6 +80,12 @@ services:
     container_name: fasttask-desktop-worker-get_hypotenuse
     restart: always
 
+    # 优雅停机等待时间，取 60s 留足冗余。
+    stop_grace_period: 60s
+
+    # 同上：保证停止时 worker 先于 master。
+    depends_on:
+      - fasttask-desktop-master
 
     security_opt:
       - seccomp:unconfined

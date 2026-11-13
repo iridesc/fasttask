@@ -12,7 +12,7 @@ FastTask 提供以下核心功能：
 
     3. 通用交互：使用 FastAPI + Uvicorn 构建 HTTP API 接口，在任何语言环境调用
 
-    4. 可靠的结果：RDB 持久化任务数据 + 执行时间限制，即使在分布式场景、极差的网络环境、不稳定的宿主环境下，仍然能有效保证任务结果，对于异常任务会返回完整异常以定位业务问题
+    4. 可靠的结果：AOF 持久化任务数据 + 执行时间限制，即使在分布式场景、极差的网络环境、不稳定的宿主环境下，仍然能有效保证任务结果，对于异常任务会返回完整异常以定位业务问题
 
     5. 轻量：基于 `python:slim` Docker 镜像，Celery + Redis，FastAPI + Uvicorn
 
@@ -141,6 +141,10 @@ FastTask 提供以下核心功能：
         container_name: fasttask-master
         restart: always
 
+        # 停机等待：必须 > 容器内 supervisord 的 stopwaitsecs 之和
+        # （celery 8s + redis 10s ≈ 18s）。docker 默认只有 10s，会 SIGKILL 掉容器导致丢数据。
+        stop_grace_period: 60s
+
         ports:
           - "9001:443"    # API 端口（客户端访问）
           - "9000:6379"   # 宿主 9000 → 容器 6379（Redis，供 Worker 连接）
@@ -172,6 +176,14 @@ FastTask 提供以下核心功能：
         image: test_project:latest
         container_name: worker-get_hypotenuse
         restart: always
+
+        # 停机等待：必须 > 容器内 supervisord 的 stopwaitsecs 之和
+        stop_grace_period: 60s
+
+        # 保证停止时 worker 先于 master：worker 停止时要把未确认的任务 requeue 回
+        # master 的队列，此时 master 的 Redis 必须还活着。compose 按依赖逆序停止。
+        depends_on:
+          - master
 
         volumes:
           - ./files-worker_1:/fasttask/files
@@ -360,6 +372,38 @@ FastTask 内建文件自动过期删除机制，由 Supervisor 管理的独立�
 
 还有一个必须同时满足的前提：**billiard 必须留在 4.2.x**（见 `requirements.txt`）。billiard 4.3.0 起，worker 子进程收到 SIGTERM 时会把 `SystemExit` 当作「任务结果」上报给主进程；而 Celery 5.6.3 只对 `Terminated` / `WorkerLostError` 做特殊处理，`SystemExit` 会落到兜底分支被 `acknowledge()` —— 结果是**任务被 ack 丢弃、重启后永不重跑**（实测复现：Redis 上只看到 `ZREM unacked_index` + `HDEL unacked`，没有 `RPUSH`）。4.2.1~4.2.4 的行为则是：子进程被 SIGTERM 直接终止，主进程拿到 `Terminated`，Celery 因为该任务已被 cancel（`_already_cancelled`）而**不做 ack**，消息留在未确认区，等连接关闭时由 Kombu 放回队列（`RPUSH`，消息带 `redelivered: true`）。
 
+#### 停止顺序：requeue 必须在 Redis 存活时完成
+
+「任务被放回队列」这一步是**写 Redis 的内存操作**，写完还要落盘才算数。如果 Redis 已经先被停掉，requeue 就写不进去，任务随之丢失。所以停止顺序必须保证 **celery 先停、Redis 后停**。
+
+supervisord 按 `priority` **降序**停止（数值大的先停）。本项目的约定：
+
+| 程序 | priority | 停止时机 |
+| --- | --- | --- |
+| `celery` | 999 | 先停 —— 在 Redis 还活着时完成 requeue |
+| `redis` | 100 | 后停 —— 收下 requeue 并 fsync 进 AOF |
+
+这两个值都写在各自的 supervisord 配置里（`celery.conf` / `redis.conf`），**不要改小 celery 的 priority**，否则 requeue 会静默失效。
+
+分布式部署（master / worker 分开）还要额外注意：worker 停止时是把任务 requeue 回 **master 的 Redis**，所以 master 必须比 worker **晚**停。compose 里用 `depends_on` 表达这个依赖（compose 停止时按依赖逆序，worker 先停、master 后停）：
+
+```yaml
+worker-get_circle_area:
+  depends_on:
+    - master
+```
+
+#### 三层停止超时必须同时满足
+
+```
+compose 的 stop_grace_period  >  supervisord 的 stopwaitsecs  >  Redis 实际关闭耗时
+       60s                          celery 8s + redis 10s            ~0.6s
+```
+
+- **compose `stop_grace_period`**：docker/podman 默认只有 **10 秒**，到点直接 SIGKILL 整个容器。样例 compose 里统一设成 `60s`。**这个值不设的话，容器会被强杀，Redis 收不了尾。**
+- **supervisord `stopwaitsecs`**：supervisord 自己的兜底超时，到点对子进程发 SIGKILL。celery 是 8s、redis 是 10s，都远小于 60s，不会成为瓶颈。
+- **Redis 实际关闭耗时**：AOF 模式下只需一次 fsync（实测 0.6 秒）。
+
 另外两条**相互独立**的重投路径（不要和上面的关机路径混为一谈）：
 
 - **worker 进程意外死亡**（OOM kill、SIGKILL、崩溃）：主进程拿到的是 `WorkerLostError`，此时由 `task_reject_on_worker_lost`（本项目为 `True`）决定是否重投，而「多久判定为丢失」由 `worker_lost_wait`（`celery_app.py`，默认 10 秒）控制。
@@ -368,6 +412,86 @@ FastTask 内建文件自动过期删除机制，由 Supervisor 管理的独立�
 验证优雅关机是否生效：celery 日志里应出现 `Restoring N unacknowledged message(s)`，且节点重启后任务会重新执行（`result_id` 不变，客户端仍可用原 id 查询）。没有这行就说明 requeue 没生效。
 
 `VISIBILITY_TIMEOUT` 是最后一层兜底，它决定最坏情况下任务要「躺」多久。需要更短的恢复时间时调小 `SOFT_TIME_LIMIT`（`VISIBILITY_TIMEOUT` 默认跟着它走），注意它必须大于 `TIME_LIMIT`。
+
+## Redis 持久化与迁移
+
+Redis 承担三份关键数据：Celery 任务队列（db 1）、任务结果（db 2）、并发锁与 RUNNING_ID（db 0）。**它停机丢数据 = 任务静默消失**，所以持久化策略必须配对。
+
+### 当前配置：AOF + 关闭 RDB 自动快照
+
+`supervisord_template_conf/redis.conf` 里：
+
+```
+--appendonly yes --appendfsync everysec --save ""
+```
+
+| 参数 | 作用 |
+| --- | --- |
+| `--appendonly yes` | 用 AOF（追加日志）持久化，每次写操作都记进 AOF，而不是靠定时快照 |
+| `--appendfsync everysec` | 每秒 fsync 一次。崩溃最多丢 1 秒写入；`always` 更安全但每次写都刷盘，代价太大 |
+| `--save ""` | 清空所有 RDB 自动快照规则，Redis 不再写 `dump.rdb` |
+
+**`--save ""` 是关键，不能省。** Redis 收到 SIGTERM 时的关闭顺序是「先 fsync AOF，**再同步写一份 RDB 快照**」。只要 `save` 规则还在，这一步就会阻塞（实测 200MB 级数据集要 40 多秒），而容器停止超时远小于它 —— 进程被 SIGKILL 截断，RDB 写不完整，重启后这期间的队列变更全部丢失。关掉 `save` 规则后，关机只剩一次 AOF fsync，实测 **0.6 秒**。
+
+关掉 RDB **不影响备份能力**：Redis 7+ 的 AOF 本身就是 `base.rdb`（RDB 格式）+ `incr.aof` 的混合结构，base 部分本身就是一份 RDB 快照。实测磁盘占用与纯 RDB 模式持平，不会翻倍。
+
+写入性能没有可感知的代价：实测 1000 次写耗时 RDB 0.32s / AOF 0.31s（`everysec` 是攒批 fsync，不是每次都刷盘）。
+
+### 从旧版本（RDB 模式）升级：必须先做迁移
+
+> ⚠️ **开启 AOF 后，Redis 启动时只读 AOF，不再读 `dump.rdb`。** 如果直接改配置重启，Redis 会发现没有 AOF 文件、新建一个空的 base 文件，然后把原有的队列数据**全部忽略** —— 实测 3008 个 key 直接变成 0。
+
+正确做法是**先在运行中的实例上开启 AOF**，让 Redis 把现有数据重写成 AOF，再重启：
+
+```bash
+# 1. 先停掉 worker，避免迁移期间有新任务写入
+docker compose stop <worker 服务>
+
+# 2. 在运行中的实例上开启 AOF（触发后台 rewrite，把现有数据写进 AOF）
+docker exec <master容器> redis-cli -a passwd CONFIG SET appendonly yes
+
+# 3. 等后台 rewrite 完成 —— 必须看到 ok
+docker exec <master容器> redis-cli -a passwd INFO persistence \
+  | grep -E "aof_rewrite_in_progress|aof_last_bgrewrite_status"
+#   aof_rewrite_in_progress:0
+#   aof_last_bgrewrite_status:ok
+
+# 4. 确认数据完整
+docker exec <master容器> redis-cli -a passwd DBSIZE   # 应与迁移前一致
+
+# 5. 再改 compose（stop_grace_period）并重启
+```
+
+第 3 步的 `aof_last_bgrewrite_status` 必须是 `ok`，否则说明 rewrite 失败，**不要继续重启**。
+
+### 数据落在哪里
+
+AOF 文件与 `dump.rdb` 同目录，都在 `REDIS_DIR`（`/fasttask/files/fasttask/redis`）内，属于 `files` 卷。**重建容器不会丢 Redis 数据**，丢的只可能是「还没落盘的那部分」。
+
+### 回滚
+
+改回 RDB 模式时，**同样不能直接重启**（AOF 模式下 Redis 不再写 `dump.rdb`，直接切回去会读到一份过期的 RDB）。正确顺序：
+
+```bash
+# 1. 停掉 worker
+# 2. 运行中的实例上关掉 AOF（会先把 AOF 内容写进 dump.rdb）
+docker exec <master容器> redis-cli -a passwd CONFIG SET appendonly no
+# 3. 确认 dump.rdb 已更新，再改回配置重启
+```
+
+### 排查
+
+```bash
+# 当前生效的持久化配置
+docker exec <容器> redis-cli -a passwd CONFIG GET appendonly
+docker exec <容器> redis-cli -a passwd CONFIG GET appendfsync
+docker exec <容器> redis-cli -a passwd CONFIG GET save      # 应为空
+
+# AOF 状态
+docker exec <容器> redis-cli -a passwd INFO persistence | grep aof
+
+# 关机日志里应只有 fsync，没有 "Saving the final RDB snapshot before exiting."
+```
 
 ## 结果存储
 
